@@ -169,15 +169,4 @@
             android:src="@drawable/ic_next" />
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/player_hint"
-        android:layout_width="fill_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:paddingLeft="12dp"
-        android:paddingRight="12dp"
-        android:text="@string/player_hint"
-        android:textColor="@color/text_secondary"
-        android:textSize="11sp" />
-
 </LinearLayout>

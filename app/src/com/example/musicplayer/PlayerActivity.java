@@ -40,7 +40,6 @@ public class PlayerActivity extends Activity
     private TextView artistText;
     private TextView albumText;
     private TextView timeText;
-    private TextView hintText;
     private TextView modeText;
     private SeekBar seekBar;
     private ImageButton playButton;
@@ -85,7 +84,6 @@ public class PlayerActivity extends Activity
         artistText = (TextView) findViewById(R.id.player_artist);
         albumText = (TextView) findViewById(R.id.player_album);
         timeText = (TextView) findViewById(R.id.player_time);
-        hintText = (TextView) findViewById(R.id.player_hint);
         modeText = (TextView) findViewById(R.id.player_mode);
         seekBar = (SeekBar) findViewById(R.id.player_seek);
         playButton = (ImageButton) findViewById(R.id.player_play);
