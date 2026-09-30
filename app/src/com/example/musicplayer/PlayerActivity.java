@@ -35,7 +35,6 @@ public class PlayerActivity extends Activity
     private TrackPlayer player;
 
     private ImageView artView;
-    private TextView headingText;
     private TextView trackText;
     private TextView artistText;
     private TextView albumText;
@@ -79,7 +78,6 @@ public class PlayerActivity extends Activity
         setContentView(R.layout.player);
 
         artView = (ImageView) findViewById(R.id.player_art);
-        headingText = (TextView) findViewById(R.id.player_heading);
         trackText = (TextView) findViewById(R.id.player_track);
         artistText = (TextView) findViewById(R.id.player_artist);
         albumText = (TextView) findViewById(R.id.player_album);
@@ -160,13 +158,11 @@ public class PlayerActivity extends Activity
 
         Track current = player != null ? player.getCurrentTrack() : null;
         if (current == null) {
-            headingText.setText(R.string.player_title);
             trackText.setText(R.string.no_song);
             artistText.setText("");
             albumText.setText("");
             showArtwork(null);
         } else {
-            headingText.setText(current.title);
             trackText.setText(current.title);
             artistText.setText(current.artist);
             albumText.setText(current.album);
