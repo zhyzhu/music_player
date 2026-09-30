@@ -30,10 +30,12 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:background="@drawable/search_box"
             android:hint="@string/search_hint"
             android:singleLine="true"
             android:imeOptions="actionDone"
             android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_hint"
             android:textSize="13sp" />
 
         <Button
