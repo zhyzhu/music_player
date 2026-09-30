@@ -105,7 +105,21 @@ public class MusicPlayerActivity extends ListActivity
         public void onServiceConnected(ComponentName name, IBinder service) {
             player = ((TrackPlayer.LocalBinder) service).getService();
             player.setListener(MusicPlayerActivity.this);
-            player.setQueue(tracks);
+
+            // Never clobber the service's queue here. When this activity is
+            // recreated (back button, then relaunch from the notification) the
+            // bind callback runs before the scan finishes, so pushing the local
+            // list would hand the service an empty queue, which releases the
+            // player and stops playback. Adopt whatever the service already has
+            // and only seed it when the service has nothing.
+            List<Track> serviceQueue = player.getQueueSnapshot();
+            if (serviceQueue.isEmpty() && !tracks.isEmpty()) {
+                player.setQueue(tracks);
+            } else if (!serviceQueue.isEmpty()) {
+                tracks.clear();
+                tracks.addAll(serviceQueue);
+                adapter.notifyDataSetChanged();
+            }
             onPlayerStateChanged();
         }
 
@@ -153,7 +167,9 @@ public class MusicPlayerActivity extends ListActivity
         // activity once playback actually starts (see startPlaybackForeground),
         // so leaving without playing leaves nothing running.
         updateModeUi();
-        scanDirectory();
+        // Automatic scan: results are shown, but the service keeps whatever it is
+        // already playing. Returning to the activity must not interrupt playback.
+        scanDirectory(false);
     }
 
     @Override
@@ -188,13 +204,15 @@ public class MusicPlayerActivity extends ListActivity
     public void onClick(View v) {
         int id = v.getId();
         if (id == R.id.btn_scan) {
-            scanDirectory();
+            // Explicit scan: the user asked for this list, so it replaces the
+            // service queue (stopping playback is expected here).
+            scanDirectory(true);
         } else if (id == R.id.btn_mode) {
             scanMode = (scanMode == MODE_LIBRARY) ? MODE_FOLDER : MODE_LIBRARY;
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putInt(PREF_MODE, scanMode).commit();
             updateModeUi();
-            scanDirectory();
+            scanDirectory(true);
         } else if (id == R.id.btn_play) {
             if (player != null) {
                 player.toggle();
@@ -304,7 +322,14 @@ public class MusicPlayerActivity extends ListActivity
 
     // ------------------------------------------------------------------ scan
 
-    private void scanDirectory() {
+    /**
+     * Scan the library.
+     *
+     * @param replaceQueue true for a user-initiated scan, which replaces what the
+     *        service is playing; false for the automatic scan on activity start,
+     *        which must leave in-progress playback untouched.
+     */
+    private void scanDirectory(final boolean replaceQueue) {
         final String raw = pathEdit.getText().toString().trim();
         final String dirPath = raw.length() == 0
                 ? new File(Environment.getExternalStorageDirectory(), "Music").getAbsolutePath()
@@ -358,7 +383,7 @@ public class MusicPlayerActivity extends ListActivity
                         if (generation != scanGeneration) {
                             return; // A newer scan superseded this one.
                         }
-                        applyScanResult(result);
+                        applyScanResult(result, replaceQueue);
                     }
                 });
             }
@@ -380,23 +405,27 @@ public class MusicPlayerActivity extends ListActivity
                 : R.string.mode_folder_info);
     }
 
-    private void applyScanResult(List<Track> found) {
+    private void applyScanResult(List<Track> found, boolean replaceQueue) {
         tracks.clear();
         tracks.addAll(found);
         adapter.notifyDataSetChanged();
 
-        // Hand the new queue to the service. A rescan while playing therefore
-        // stops playback, which is the predictable behaviour.
-        if (player != null) {
+        // Only a user-initiated scan replaces what the service is playing.
+        // Otherwise returning to this activity would stop the current track.
+        if (replaceQueue && player != null) {
             player.setQueue(tracks);
         }
 
+        boolean playing = player != null && player.isPrepared();
         if (tracks.isEmpty()) {
-            nowText.setText(R.string.no_song);
+            nowText.setText(playing ? R.string.playing_other : R.string.no_song);
             emptyText.setVisibility(View.VISIBLE);
             getListView().setVisibility(View.GONE);
         } else {
-            nowText.setText(getString(R.string.found, tracks.size()));
+            // Do not overwrite the now-playing line while audio is running.
+            nowText.setText(playing
+                    ? getString(R.string.found_playing, tracks.size())
+                    : getString(R.string.found, tracks.size()));
             emptyText.setVisibility(View.GONE);
             getListView().setVisibility(View.VISIBLE);
         }

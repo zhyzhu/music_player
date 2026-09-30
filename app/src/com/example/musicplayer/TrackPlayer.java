@@ -106,7 +106,11 @@ public class TrackPlayer extends Service
         this.listener = listener;
     }
 
-    /** Replace the queue. Does not start playback. */
+    /**
+     * Replace the queue. Stops any playback in progress: the new queue starts
+     * with no current track. Callers that only want to display a list must not
+     * call this (see MusicPlayerActivity's bind callback).
+     */
     public void setQueue(List<Track> tracks) {
         queue.clear();
         if (tracks != null) {
@@ -127,6 +131,14 @@ public class TrackPlayer extends Service
 
     public int getIndex() {
         return index;
+    }
+
+    /**
+     * A copy of the current queue, so callers cannot mutate the service state by
+     * accident and the service keeps sole ownership of the list.
+     */
+    public List<Track> getQueueSnapshot() {
+        return new ArrayList<Track>(queue);
     }
 
     public Track getCurrentTrack() {
