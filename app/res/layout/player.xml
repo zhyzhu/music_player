@@ -3,6 +3,9 @@
   Player page: opened by tapping the now-playing bar on the main screen.
   It holds no playback state of its own - it binds to the same service and
   reflects what the service is doing.
+
+  The transport controls are ImageButtons: the stock Button chrome is heavy and
+  dated, and these glyphs scale cleanly per density.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="fill_parent"
@@ -23,10 +26,10 @@
 
     <ImageView
         android:id="@+id/player_art"
-        android:layout_width="200dp"
-        android:layout_height="200dp"
+        android:layout_width="190dp"
+        android:layout_height="190dp"
         android:layout_gravity="center_horizontal"
-        android:layout_marginTop="18dp"
+        android:layout_marginTop="16dp"
         android:background="@drawable/art_background"
         android:contentDescription="@string/cd_album_art"
         android:scaleType="centerCrop" />
@@ -76,7 +79,7 @@
         android:id="@+id/player_seek"
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="14dp"
+        android:layout_marginTop="12dp"
         android:paddingLeft="12dp"
         android:paddingRight="12dp" />
 
@@ -90,45 +93,87 @@
         android:textColor="@color/text_secondary"
         android:textSize="12sp" />
 
+    <!-- Shuffle and repeat are separate controls: the combinations are
+         independent (shuffled single-track repeat is a valid choice). -->
     <LinearLayout
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="12dp"
+        android:gravity="center"
         android:orientation="horizontal">
 
-        <Button
+        <ImageButton
+            android:id="@+id/player_shuffle"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/cd_shuffle"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_shuffle_off" />
+
+        <TextView
+            android:id="@+id/player_mode"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <ImageButton
+            android:id="@+id/player_repeat"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/cd_repeat"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_repeat_all" />
+    </LinearLayout>
+
+    <!-- Transport row. -->
+    <LinearLayout
+        android:layout_width="fill_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageButton
             android:id="@+id/player_prev"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="56dp"
             android:layout_weight="1"
-            android:minWidth="0dp"
-            android:text="@string/btn_prev"
-            android:textSize="13sp" />
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/btn_prev"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_prev" />
 
-        <Button
+        <ImageButton
             android:id="@+id/player_play"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="64dp"
             android:layout_weight="1"
-            android:minWidth="0dp"
-            android:text="@string/btn_play"
-            android:textSize="13sp" />
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/btn_play"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_play" />
 
-        <Button
+        <ImageButton
             android:id="@+id/player_next"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="56dp"
             android:layout_weight="1"
-            android:minWidth="0dp"
-            android:text="@string/btn_next"
-            android:textSize="13sp" />
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/btn_next"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_next" />
     </LinearLayout>
 
     <TextView
         android:id="@+id/player_hint"
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="8dp"
         android:paddingLeft="12dp"
         android:paddingRight="12dp"
         android:text="@string/player_hint"

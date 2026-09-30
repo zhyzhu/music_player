@@ -11,7 +11,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.view.View;
-import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -41,8 +41,11 @@ public class PlayerActivity extends Activity
     private TextView albumText;
     private TextView timeText;
     private TextView hintText;
+    private TextView modeText;
     private SeekBar seekBar;
-    private Button playButton;
+    private ImageButton playButton;
+    private ImageButton shuffleButton;
+    private ImageButton repeatButton;
 
     private boolean userSeeking;
     private boolean progressPosted;
@@ -83,10 +86,15 @@ public class PlayerActivity extends Activity
         albumText = (TextView) findViewById(R.id.player_album);
         timeText = (TextView) findViewById(R.id.player_time);
         hintText = (TextView) findViewById(R.id.player_hint);
+        modeText = (TextView) findViewById(R.id.player_mode);
         seekBar = (SeekBar) findViewById(R.id.player_seek);
-        playButton = (Button) findViewById(R.id.player_play);
+        playButton = (ImageButton) findViewById(R.id.player_play);
+        shuffleButton = (ImageButton) findViewById(R.id.player_shuffle);
+        repeatButton = (ImageButton) findViewById(R.id.player_repeat);
 
         playButton.setOnClickListener(this);
+        shuffleButton.setOnClickListener(this);
+        repeatButton.setOnClickListener(this);
         findViewById(R.id.player_prev).setOnClickListener(this);
         findViewById(R.id.player_next).setOnClickListener(this);
         seekBar.setOnSeekBarChangeListener(this);
@@ -136,6 +144,10 @@ public class PlayerActivity extends Activity
         } else if (id == R.id.player_next) {
             player.next();
             startService(new Intent(this, TrackPlayer.class));
+        } else if (id == R.id.player_shuffle) {
+            player.setShuffle(!player.isShuffle());
+        } else if (id == R.id.player_repeat) {
+            player.cycleRepeatMode();
         }
     }
 
@@ -143,7 +155,10 @@ public class PlayerActivity extends Activity
 
     public void onPlayerStateChanged() {
         boolean playing = player != null && player.isPlaying();
-        playButton.setText(playing ? R.string.btn_pause : R.string.btn_play);
+        playButton.setImageResource(playing ? R.drawable.ic_pause : R.drawable.ic_play);
+        playButton.setContentDescription(getString(
+                playing ? R.string.btn_pause : R.string.btn_play));
+        updateModeUi();
 
         Track current = player != null ? player.getCurrentTrack() : null;
         if (current == null) {
@@ -164,6 +179,41 @@ public class PlayerActivity extends Activity
         } else {
             stopProgress();
         }
+    }
+
+    // ----------------------------------------------------------- play mode
+
+    /**
+     * Reflect shuffle and repeat state.
+     *
+     * The toggles swap between a grey and an accent-blue glyph rather than
+     * fading one icon: on/off reads more clearly, and it avoids depending on
+     * drawable alpha behaviour.
+     */
+    private void updateModeUi() {
+        if (player == null) {
+            return;
+        }
+        boolean shuffle = player.isShuffle();
+        int repeat = player.getRepeatMode();
+
+        shuffleButton.setImageResource(shuffle
+                ? R.drawable.ic_shuffle_on : R.drawable.ic_shuffle_off);
+        shuffleButton.setContentDescription(getString(R.string.cd_shuffle)
+                + " " + getString(shuffle ? R.string.mode_shuffle : R.string.mode_order));
+
+        if (repeat == TrackPlayer.REPEAT_ONE) {
+            repeatButton.setImageResource(R.drawable.ic_repeat_one);
+            modeText.setText(R.string.repeat_one);
+        } else if (repeat == TrackPlayer.REPEAT_ALL) {
+            repeatButton.setImageResource(R.drawable.ic_repeat_all);
+            modeText.setText(R.string.repeat_all);
+        } else {
+            repeatButton.setImageResource(R.drawable.ic_repeat_off);
+            modeText.setText(R.string.repeat_off);
+        }
+        repeatButton.setContentDescription(getString(R.string.cd_repeat)
+                + " " + modeText.getText());
     }
 
     private void updateProgress() {

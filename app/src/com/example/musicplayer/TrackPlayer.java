@@ -19,6 +19,7 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.widget.RemoteViews;
+import android.widget.Toast;
 
 /**
  * Playback engine, owned by a foreground service so audio keeps running when the
@@ -41,6 +42,11 @@ public class TrackPlayer extends Service
     public static final String ACTION_PAUSE = "com.example.musicplayer.PAUSE";
     public static final String ACTION_NEXT = "com.example.musicplayer.NEXT";
 
+    /** Repeat modes. Shuffle is independent of these. */
+    public static final int REPEAT_OFF = 0;
+    public static final int REPEAT_ALL = 1;
+    public static final int REPEAT_ONE = 2;
+
     private static final int NOTIFICATION_ID = 1;
     private static final int REQ_CONTENT = 10;
     /**
@@ -59,6 +65,17 @@ public class TrackPlayer extends Service
     private Listener listener;
 
     private final List<Track> queue = new ArrayList<Track>();
+    /**
+     * The order tracks are visited in. Without shuffle this is the identity
+     * order; with shuffle it is a permutation. Playing next/previous walks this
+     * list, so shuffling never has to disturb the queue itself.
+     */
+    private final List<Integer> order = new ArrayList<Integer>();
+    /** Position within {@link #order}, not within {@link #queue}. */
+    private int orderPos = -1;
+    private boolean shuffle;
+    private int repeatMode = REPEAT_ALL;
+
     private MediaPlayer player;
     private AudioManager audioManager;
     private NotificationManager notificationManager;
@@ -121,8 +138,7 @@ public class TrackPlayer extends Service
         this.listener = listener;
     }
 
-    /**
-     * Replace the queue. Stops any playback in progress: the new queue starts
+    /** Replace the queue. Stops any playback in progress: the new queue starts
      * with no current track. Callers that only want to display a list must not
      * call this (see MusicPlayerActivity's bind callback).
      */
@@ -131,15 +147,16 @@ public class TrackPlayer extends Service
         if (tracks != null) {
             queue.addAll(tracks);
         }
-        if (index >= queue.size()) {
-            index = -1;
-        }
+        index = -1;
+        orderPos = -1;
+        order.clear();
         if (queue.isEmpty()) {
             releasePlayer();
             leaveForeground();
             notifyListener();
             stopSelf();
         } else {
+            buildOrder(index);
             notifyListener();
         }
     }
@@ -193,6 +210,7 @@ public class TrackPlayer extends Service
         if (tracks != null) {
             queue.addAll(tracks);
         }
+        buildOrder(position);
         playAt(position);
     }
 
@@ -201,6 +219,12 @@ public class TrackPlayer extends Service
             return;
         }
         index = position;
+        orderPos = order.indexOf(Integer.valueOf(position));
+        if (orderPos < 0) {
+            // Nothing sensible to walk; fall back to a linear order.
+            buildOrder(position);
+            orderPos = order.indexOf(Integer.valueOf(position));
+        }
         Track track = queue.get(position);
 
         releasePlayer();
@@ -242,7 +266,7 @@ public class TrackPlayer extends Service
                 notifyListener();
             }
         } else if (!queue.isEmpty()) {
-            playAt(index < 0 ? 0 : index);
+            playAt(index < 0 ? orderStart() : index);
         }
     }
 
@@ -257,17 +281,107 @@ public class TrackPlayer extends Service
     }
 
     public void next() {
-        if (queue.isEmpty()) {
-            return;
-        }
-        playAt(index < 0 ? 0 : (index + 1) % queue.size());
+        step(1);
     }
 
     public void previous() {
-        if (queue.isEmpty()) {
+        step(-1);
+    }
+
+    /**
+     * Move one position along {@link #order}.
+     *
+     * Manual skipping wraps in every repeat mode except "off", where it stops at
+     * the ends; "repeat one" still skips, because the user asked to move.
+     */
+    private void step(int delta) {
+        if (order.isEmpty()) {
             return;
         }
-        playAt(index < 0 ? 0 : (index - 1 + queue.size()) % queue.size());
+        int target = orderPos + delta;
+        if (target < 0) {
+            if (repeatMode == REPEAT_OFF) {
+                return;
+            }
+            target = order.size() - 1;
+        } else if (target >= order.size()) {
+            if (repeatMode == REPEAT_OFF) {
+                return;
+            }
+            target = 0;
+        }
+        playAt(order.get(target).intValue());
+    }
+
+    // ------------------------------------------------------ shuffle / repeat
+
+    public boolean isShuffle() {
+        return shuffle;
+    }
+
+    public int getRepeatMode() {
+        return repeatMode;
+    }
+
+    /** Turning shuffle on reshuffles around the current track, which keeps playing. */
+    public void setShuffle(boolean on) {
+        if (shuffle == on) {
+            return;
+        }
+        shuffle = on;
+        buildOrder(index);
+        notifyListener();
+    }
+
+    public void setRepeatMode(int mode) {
+        if (mode != REPEAT_OFF && mode != REPEAT_ALL && mode != REPEAT_ONE) {
+            return;
+        }
+        repeatMode = mode;
+        notifyListener();
+    }
+
+    /** Cycle order -> repeat all -> repeat one. */
+    public void cycleRepeatMode() {
+        setRepeatMode((repeatMode + 1) % 3);
+    }
+
+    /**
+     * Rebuild {@link #order}.
+     *
+     * With shuffle off this is the identity order. With shuffle on, the anchor
+     * track (the one playing now) is placed first and the rest are shuffled, so
+     * toggling shuffle never interrupts what is playing.
+     */
+    private void buildOrder(int anchor) {
+        order.clear();
+        int count = queue.size();
+        if (count == 0) {
+            orderPos = -1;
+            return;
+        }
+        if (!shuffle) {
+            for (int i = 0; i < count; i++) {
+                order.add(Integer.valueOf(i));
+            }
+        } else {
+            if (anchor >= 0 && anchor < count) {
+                order.add(Integer.valueOf(anchor));
+            }
+            List<Integer> rest = new ArrayList<Integer>();
+            for (int i = 0; i < count; i++) {
+                if (i != anchor) {
+                    rest.add(Integer.valueOf(i));
+                }
+            }
+            java.util.Collections.shuffle(rest);
+            order.addAll(rest);
+        }
+        orderPos = anchor >= 0 ? order.indexOf(Integer.valueOf(anchor)) : -1;
+    }
+
+    private int orderStart() {
+        return order.isEmpty() ? 0 : order.get(0).intValue();
     }
 
     public void seekTo(int position) {
@@ -303,16 +417,32 @@ public class TrackPlayer extends Service
     }
 
     public void onCompletion(MediaPlayer mp) {
-        // Advance within the queue the service holds, so playback continues even
-        // with no activity attached.
-        if (!queue.isEmpty() && index >= 0) {
-            playAt((index + 1) % queue.size());
+        // Reached the end of a track: this is where repeat mode decides what
+        // happens. Playback continues even with no activity attached.
+        if (queue.isEmpty() || index < 0) {
+            return;
         }
+        if (repeatMode == REPEAT_ONE) {
+            playAt(index);
+            return;
+        }
+        int target = orderPos + 1;
+        if (target >= order.size()) {
+            if (repeatMode == REPEAT_OFF) {
+                // Stop at the end: stay prepared on the last track, paused.
+                pause();
+                return;
+            }
+            target = 0;
+        }
+        playAt(order.get(target).intValue());
     }
 
     public boolean onError(MediaPlayer mp, int what, int extra) {
         releasePlayer();
         leaveForeground();
+        // Without this the failure would be silent: the row just does not start.
+        Toast.makeText(this, R.string.error_play, Toast.LENGTH_SHORT).show();
         notifyListener();
         return true;
     }

@@ -37,6 +37,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:background="@drawable/search_box"
+            android:focusable="false"
             android:hint="@string/search_hint"
             android:imeOptions="actionDone"
             android:singleLine="true"
@@ -197,18 +198,13 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
-        <TextView
+        <ImageView
             android:id="@+id/btn_play"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginLeft="6dp"
-            android:minWidth="52dp"
-            android:gravity="center"
-            android:paddingBottom="8dp"
-            android:paddingTop="8dp"
-            android:text="@string/btn_play_short"
-            android:textColor="@color/accent"
-            android:textSize="13sp"
-            android:textStyle="bold" />
+            android:contentDescription="@string/btn_play"
+            android:padding="8dp"
+            android:src="@drawable/ic_bar_play" />
     </LinearLayout>
 </LinearLayout>

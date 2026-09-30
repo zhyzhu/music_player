@@ -102,7 +102,7 @@ public class MusicPlayerActivity extends Activity
 
     private EditText searchEdit;
     private Button clearButton;
-    private TextView playButton;
+    private ImageView playButton;
     private ImageView artView;
     private TextView listInfo;
     private TextView nowText;
@@ -200,7 +200,7 @@ public class MusicPlayerActivity extends Activity
         nowText = (TextView) findViewById(R.id.now);
         nowArtist = (TextView) findViewById(R.id.now_artist);
         nowBar = findViewById(R.id.now_bar);
-        playButton = (TextView) findViewById(R.id.btn_play);
+        playButton = (ImageView) findViewById(R.id.btn_play);
 
         scanButton.setOnClickListener(this);
         clearButton.setOnClickListener(this);
@@ -407,7 +407,9 @@ public class MusicPlayerActivity extends Activity
 
     public void onPlayerStateChanged() {
         boolean playing = player != null && player.isPlaying();
-        playButton.setText(playing ? R.string.btn_pause_short : R.string.btn_play_short);
+        playButton.setImageResource(playing ? R.drawable.ic_bar_pause : R.drawable.ic_bar_play);
+        playButton.setContentDescription(getString(
+                playing ? R.string.btn_pause : R.string.btn_play));
 
         Track current = player != null ? player.getCurrentTrack() : null;
         if (current == null) {

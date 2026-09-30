@@ -14,10 +14,14 @@
     <!-- 播放页 -->
     <string name="player_title">正在播放</string>
     <string name="player_hint">播放由后台服务继续，退出此页不会中断。</string>
+    <string name="cd_shuffle">随机播放</string>
+    <string name="cd_repeat">循环模式</string>
+    <string name="mode_order">顺序</string>
+    <string name="mode_shuffle">随机</string>
+    <string name="repeat_off">不循环</string>
+    <string name="repeat_all">列表循环</string>
+    <string name="repeat_one">单曲循环</string>
 
-    <!-- 底部控制栏 -->
-    <string name="btn_play_short">播放</string>
-    <string name="btn_pause_short">暂停</string>
 
     <!-- 播放控制 -->
     <string name="btn_play">播放</string>
