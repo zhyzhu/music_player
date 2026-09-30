@@ -3,7 +3,6 @@
 # Recreate with tools/fetch_toolchain.ps1
 tools/jdk/
 tools/sdk/
-tools/mingit/
 tools/downloads/
 
 # ------------------------------------------------------------------ secrets
