@@ -33,14 +33,33 @@
             android:textSize="13sp" />
 
         <Button
+            android:id="@+id/btn_mode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="6dp"
+            android:minWidth="0dp"
+            android:text="@string/mode_toggle_to_folder"
+            android:textSize="12sp" />
+
+        <Button
             android:id="@+id/btn_scan"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginLeft="6dp"
-            android:minWidth="72dp"
+            android:minWidth="60dp"
             android:text="@string/scan"
             android:textSize="13sp" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/mode_info"
+        android:layout_width="fill_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="4dp"
+        android:paddingLeft="8dp"
+        android:paddingRight="8dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="11sp" />
 
     <ListView
         android:id="@android:id/list"

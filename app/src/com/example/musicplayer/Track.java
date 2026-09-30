@@ -3,39 +3,69 @@ package com.example.musicplayer;
 /**
  * One playable audio entry.
  *
- * Kept deliberately simple: this class only holds data, so it compiles against
- * Android 2.2 (API level 8) with no dependencies beyond the JDK.
+ * A track can come from two sources: the MediaStore index (which carries real
+ * ID3 tags, a duration and a content:// URI) or a plain folder scan (which only
+ * knows the file name). Both are represented here, so playback must accept
+ * either a file path or a URI.
+ *
+ * Fallback labels are passed in by the caller rather than taken from resources,
+ * so this class stays dependency-free and compiles against API level 8.
  */
 public class Track {
 
     public final String title;
     public final String artist;
     public final String album;
+    /** Absolute file path, or null for MediaStore entries. */
     public final String path;
+    /** "content://media/..." URI from MediaStore, or null for folder scans. */
+    public final String uri;
     /** Duration in milliseconds, or 0 when unknown (file-scanned entries). */
     public final long duration;
 
-    public Track(String title, String artist, String album, String path, long duration) {
-        this.title = emptyTo(title, "未知歌曲");
-        this.artist = emptyTo(artist, "未知艺术家");
-        this.album = emptyTo(album, "未知专辑");
+    public Track(String title, String artist, String album,
+                 String path, String uri, long duration,
+                 String fallbackTitle, String fallbackArtist, String fallbackAlbum) {
+        this.title = clean(title, fallbackTitle);
+        this.artist = clean(artist, fallbackArtist);
+        this.album = clean(album, fallbackAlbum);
         this.path = path;
+        this.uri = uri;
         this.duration = duration;
     }
 
-    private static String emptyTo(String value, String fallback) {
+    /** Folder scan: only the file name is known. */
+    public static Track fromFile(String name, String path,
+                                 String fallbackTitle, String fallbackArtist,
+                                 String fallbackAlbum) {
+        return new Track(name, null, null, path, null, 0L,
+                fallbackTitle, fallbackArtist, fallbackAlbum);
+    }
+
+    /** MediaStore entry, with real tags and a content:// URI. */
+    public static Track fromMediaStore(String title, String artist, String album,
+                                       String path, String uri, long duration,
+                                       boolean variousArtists, String fallbackTitle,
+                                       String fallbackArtist, String fallbackAlbum,
+                                       String variousLabel) {
+        String shownArtist = variousArtists ? variousLabel : artist;
+        return new Track(title, shownArtist, album, path, uri, duration,
+                fallbackTitle, fallbackArtist, fallbackAlbum);
+    }
+
+    private static String clean(String value, String fallback) {
         if (value == null) {
             return fallback;
         }
         String trimmed = value.trim();
-        // "<unknown>" is what MediaStore stores when a tag is missing.
+        // MediaStore stores "<unknown>" when a tag is missing.
         if (trimmed.length() == 0 || "<unknown>".equalsIgnoreCase(trimmed)) {
             return fallback;
         }
         return trimmed;
     }
 
-    /** Human readable label used both in the list and in the now-playing bar. */
+    /** Label used in the now-playing bar. */
     public String displayName() {
         return title + " - " + artist;
     }

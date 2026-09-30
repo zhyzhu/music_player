@@ -3,9 +3,11 @@
     <string name="app_name">音乐播放器</string>
     <string name="scan">扫描</string>
     <string name="scan_hint">输入音乐目录，例如 /sdcard/Music</string>
-    <string name="empty">没有找到音频文件，请把 mp3 放到 /sdcard/Music 后点击“扫描”。</string>
+    <string name="empty">没有找到音频文件。请把 mp3 放到 /sdcard/Music 后点击“扫描”；或切换到“音乐库”模式，读取系统已索引的歌曲。</string>
     <string name="unknown_artist">未知艺术家</string>
     <string name="unknown_album">未知专辑</string>
+    <string name="unknown_song">未知歌曲</string>
+    <string name="various_artists">多位艺术家</string>
     <string name="btn_play">播放</string>
     <string name="btn_pause">暂停</string>
     <string name="btn_prev">上一首</string>
@@ -15,4 +17,11 @@
     <string name="scanning">正在扫描…</string>
     <string name="found">共找到 %1$d 首歌曲</string>
     <string name="error_play">无法播放该文件</string>
+
+    <!-- 扫描模式：音乐库（MediaStore 索引）／文件夹（遍历目录） -->
+    <string name="mode_toggle_to_folder">切到文件夹</string>
+    <string name="mode_toggle_to_library">切到音乐库</string>
+    <string name="mode_library_info">当前：音乐库（读取系统已索引的歌曲）</string>
+    <string name="mode_folder_info">当前：文件夹（遍历指定目录）</string>
+    <string name="dir_missing">目录不存在：%1$s</string>
 </resources>
