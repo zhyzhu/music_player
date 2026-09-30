@@ -9,12 +9,13 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -24,13 +25,15 @@ import android.widget.EditText;
 import android.widget.ListView;
 import android.widget.SeekBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 /**
  * Music player UI for Android 2.2 (API level 8).
  *
- * The activity owns the library, the list and the progress display; actual
- * playback lives in {@link TrackPlayer}, a foreground service, so music keeps
+ * Songs are discovered automatically: the MediaStore index first, then the Music
+ * folder on the SD card for anything the media scanner has not indexed. The user
+ * never has to know or type a path - the search box filters by title or artist.
+ *
+ * Playback lives in {@link TrackPlayer}, a foreground service, so audio keeps
  * playing when this activity is not in the foreground.
  *
  * Deliberately written in Java 6 syntax and limited to API 8 APIs.
@@ -45,58 +48,46 @@ public class MusicPlayerActivity extends ListActivity
         ".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac", ".mid", ".midi", ".amr", ".3gp", ".mp4"
     };
 
-    /** Scan the whole MediaStore index, or just one folder. */
-    private static final int MODE_LIBRARY = 0;
-    private static final int MODE_FOLDER = 1;
-
-    private static final String PREFS = "player";
-    private static final String PREF_MODE = "mode";
-    private static final String PREF_DIR = "dir";
+    /** Folder scanned when nothing is indexed yet; no need to ask the user. */
+    private static final String DEFAULT_FOLDER = "Music";
 
     private static final int MSG_PROGRESS = 1;
+    private static final int MSG_FILTER = 2;
     private static final long PROGRESS_INTERVAL_MS = 1000L;
+    /** Keystrokes arrive faster than a filter needs to run. */
+    private static final long FILTER_DELAY_MS = 250L;
 
-    private final List<Track> tracks = new ArrayList<Track>();
+    /** Every track found by the last scan, in display order. */
+    private final List<Track> allTracks = new ArrayList<Track>();
+    /** The subset currently shown, matching the search box. */
+    private final List<Track> visibleTracks = new ArrayList<Track>();
     private TrackAdapter adapter;
 
     /** Bound playback service, or null until the connection completes. */
     private TrackPlayer player;
+    /** True once playback has been asked for; from then on the queue is fixed. */
+    private boolean playbackStarted;
 
-    private EditText pathEdit;
-    private Button scanButton;
-    private Button modeButton;
+    private EditText searchEdit;
+    private Button clearButton;
     private Button playButton;
-    private TextView modeInfo;
+    private TextView listInfo;
     private TextView nowText;
     private TextView timeText;
     private TextView emptyText;
     private SeekBar seekBar;
 
-    private int scanMode = MODE_LIBRARY;
     private int scanGeneration;
     private boolean userSeeking;
     private boolean progressPosted;
 
     private final Handler handler = new Handler() {
         public void handleMessage(Message msg) {
-            if (msg.what != MSG_PROGRESS) {
-                return;
-            }
-            progressPosted = false;
-            if (player == null || !player.isPrepared()) {
-                return;
-            }
-            int duration = player.getDuration();
-            if (duration > 0 && seekBar.getMax() != duration) {
-                seekBar.setMax(duration);
-            }
-            if (!userSeeking && duration > 0) {
-                seekBar.setProgress(player.getPosition());
-            }
-            timeText.setText(formatTime(player.getPosition()) + " / "
-                    + formatTime(duration));
-            if (player.isPlaying()) {
-                postProgress();
+            if (msg.what == MSG_PROGRESS) {
+                progressPosted = false;
+                updateProgress();
+            } else if (msg.what == MSG_FILTER) {
+                updateFilter();
             }
         }
     };
@@ -105,6 +96,7 @@ public class MusicPlayerActivity extends ListActivity
         public void onServiceConnected(ComponentName name, IBinder service) {
             player = ((TrackPlayer.LocalBinder) service).getService();
             player.setListener(MusicPlayerActivity.this);
+            playbackStarted = player.isPrepared();
 
             // Never clobber the service's queue here. When this activity is
             // recreated (back button, then relaunch from the notification) the
@@ -113,19 +105,37 @@ public class MusicPlayerActivity extends ListActivity
             // player and stops playback. Adopt whatever the service already has
             // and only seed it when the service has nothing.
             List<Track> serviceQueue = player.getQueueSnapshot();
-            if (serviceQueue.isEmpty() && !tracks.isEmpty()) {
-                player.setQueue(tracks);
-            } else if (!serviceQueue.isEmpty()) {
-                tracks.clear();
-                tracks.addAll(serviceQueue);
+            if (!serviceQueue.isEmpty()) {
+                allTracks.clear();
+                allTracks.addAll(serviceQueue);
                 adapter.notifyDataSetChanged();
+            } else if (!visibleTracks.isEmpty()) {
+                player.setQueue(new ArrayList<Track>(visibleTracks));
             }
+            updateFilter();
             onPlayerStateChanged();
         }
 
         public void onServiceDisconnected(ComponentName name) {
             player = null;
             onPlayerStateChanged();
+        }
+    };
+
+    private final TextWatcher searchWatcher = new TextWatcher() {
+        public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+        }
+
+        public void onTextChanged(CharSequence s, int start, int before, int count) {
+        }
+
+        public void afterTextChanged(Editable s) {
+            if (clearButton != null) {
+                clearButton.setVisibility(s.length() > 0 ? View.VISIBLE : View.GONE);
+            }
+            // Debounce: filtering on every keystroke is wasted work on a long list.
+            handler.removeMessages(MSG_FILTER);
+            handler.sendEmptyMessageDelayed(MSG_FILTER, FILTER_DELAY_MS);
         }
     };
 
@@ -136,48 +146,38 @@ public class MusicPlayerActivity extends ListActivity
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
 
-        pathEdit = (EditText) findViewById(R.id.path);
-        scanButton = (Button) findViewById(R.id.btn_scan);
-        modeButton = (Button) findViewById(R.id.btn_mode);
+        searchEdit = (EditText) findViewById(R.id.search);
+        clearButton = (Button) findViewById(R.id.btn_clear);
+        Button scanButton = (Button) findViewById(R.id.btn_scan);
         playButton = (Button) findViewById(R.id.btn_play);
         Button prevButton = (Button) findViewById(R.id.btn_prev);
         Button nextButton = (Button) findViewById(R.id.btn_next);
-        modeInfo = (TextView) findViewById(R.id.mode_info);
+        listInfo = (TextView) findViewById(R.id.list_info);
         nowText = (TextView) findViewById(R.id.now);
         timeText = (TextView) findViewById(R.id.time);
         emptyText = (TextView) findViewById(R.id.empty);
         seekBar = (SeekBar) findViewById(R.id.seek);
 
         scanButton.setOnClickListener(this);
-        modeButton.setOnClickListener(this);
+        clearButton.setOnClickListener(this);
         playButton.setOnClickListener(this);
         prevButton.setOnClickListener(this);
         nextButton.setOnClickListener(this);
         seekBar.setOnSeekBarChangeListener(this);
+        searchEdit.addTextChangedListener(searchWatcher);
 
         adapter = new TrackAdapter(this);
         setListAdapter(adapter);
 
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        scanMode = prefs.getInt(PREF_MODE, MODE_LIBRARY);
-        File defaultDir = new File(Environment.getExternalStorageDirectory(), "Music");
-        pathEdit.setText(prefs.getString(PREF_DIR, defaultDir.getAbsolutePath()));
-
-        // The service is created by the bind in onStart and only outlives this
-        // activity once playback actually starts (see startPlaybackForeground),
-        // so leaving without playing leaves nothing running.
-        updateModeUi();
-        // Automatic scan: results are shown, but the service keeps whatever it is
-        // already playing. Returning to the activity must not interrupt playback.
-        scanDirectory(false);
+        // Automatic scan on start: results are shown, but the service keeps
+        // whatever it is already playing, so returning here cannot interrupt it.
+        scan(false);
     }
 
     @Override
     protected void onStart() {
         super.onStart();
-        // Bind here (not in onCreate) so the bind/unbind calls stay balanced with
-        // onStop, and so playback driven from the notification is picked up again
-        // when this activity returns.
+        // Bind here (not in onCreate) so bind/unbind stay balanced with onStop.
         bindService(new Intent(this, TrackPlayer.class), connection, Context.BIND_AUTO_CREATE);
         onPlayerStateChanged();
     }
@@ -195,6 +195,7 @@ public class MusicPlayerActivity extends ListActivity
 
     @Override
     protected void onDestroy() {
+        handler.removeMessages(MSG_FILTER);
         stopProgress();
         super.onDestroy();
     }
@@ -204,19 +205,15 @@ public class MusicPlayerActivity extends ListActivity
     public void onClick(View v) {
         int id = v.getId();
         if (id == R.id.btn_scan) {
-            // Explicit scan: the user asked for this list, so it replaces the
-            // service queue (stopping playback is expected here).
-            scanDirectory(true);
-        } else if (id == R.id.btn_mode) {
-            scanMode = (scanMode == MODE_LIBRARY) ? MODE_FOLDER : MODE_LIBRARY;
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putInt(PREF_MODE, scanMode).commit();
-            updateModeUi();
-            scanDirectory(true);
+            scan(true);
+        } else if (id == R.id.btn_clear) {
+            searchEdit.setText("");
         } else if (id == R.id.btn_play) {
             if (player != null) {
                 player.toggle();
-                startPlaybackForeground();
+                if (player.isPlaying()) {
+                    startPlaybackForeground();
+                }
                 postProgress();
             }
         } else if (id == R.id.btn_prev) {
@@ -234,22 +231,40 @@ public class MusicPlayerActivity extends ListActivity
 
     @Override
     protected void onListItemClick(ListView l, View v, int position, long itemId) {
-        if (player == null || position < 0 || position >= tracks.size()) {
+        if (player == null || position < 0 || position >= visibleTracks.size()) {
             return;
         }
-        if (position == player.getIndex() && player.isPrepared()) {
+        int serviceIndex = indexInServiceQueue(visibleTracks.get(position));
+        if (serviceIndex >= 0 && serviceIndex == player.getIndex() && player.isPrepared()) {
             player.toggle();
         } else {
-            player.play(tracks, position);
+            // Play the visible list, so next/previous follow what the user sees.
+            player.play(new ArrayList<Track>(visibleTracks), position);
+            playbackStarted = true;
         }
         startPlaybackForeground();
         postProgress();
     }
 
-    /**
-     * Promote the service from "bound" to "started" so playback continues after
-     * this activity goes away.
-     */
+    /** Position of a track in the service queue, matched by identity then name. */
+    private int indexInServiceQueue(Track track) {
+        if (player == null) {
+            return -1;
+        }
+        List<Track> queue = player.getQueueSnapshot();
+        for (int i = 0; i < queue.size(); i++) {
+            Track other = queue.get(i);
+            if (other == track) {
+                return i;
+            }
+            if (other.title.equals(track.title) && other.artist.equals(track.artist)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Promote the service from bound to started so playback survives this UI. */
     private void startPlaybackForeground() {
         startService(new Intent(this, TrackPlayer.class));
     }
@@ -271,6 +286,23 @@ public class MusicPlayerActivity extends ListActivity
             postProgress();
         } else {
             stopProgress();
+        }
+    }
+
+    private void updateProgress() {
+        if (player == null || !player.isPrepared()) {
+            return;
+        }
+        int duration = player.getDuration();
+        if (duration > 0 && seekBar.getMax() != duration) {
+            seekBar.setMax(duration);
+        }
+        if (!userSeeking && duration > 0) {
+            seekBar.setProgress(player.getPosition());
+        }
+        timeText.setText(formatTime(player.getPosition()) + " / " + formatTime(duration));
+        if (player.isPlaying()) {
+            postProgress();
         }
     }
 
@@ -323,58 +355,33 @@ public class MusicPlayerActivity extends ListActivity
     // ------------------------------------------------------------------ scan
 
     /**
-     * Scan the library.
+     * Discover songs.
      *
      * @param replaceQueue true for a user-initiated scan, which replaces what the
      *        service is playing; false for the automatic scan on activity start,
      *        which must leave in-progress playback untouched.
      */
-    private void scanDirectory(final boolean replaceQueue) {
-        final String raw = pathEdit.getText().toString().trim();
-        final String dirPath = raw.length() == 0
-                ? new File(Environment.getExternalStorageDirectory(), "Music").getAbsolutePath()
-                : raw;
-        final int mode = scanMode;
+    private void scan(final boolean replaceQueue) {
+        final File fallbackDir = new File(Environment.getExternalStorageDirectory(),
+                DEFAULT_FOLDER);
 
-        // In folder mode the directory must exist; in library mode the path is
-        // only a fallback, so a missing one is not fatal.
-        final File dir = new File(dirPath);
-        if (mode == MODE_FOLDER && !dir.isDirectory()) {
-            toast(getString(R.string.dir_missing, dirPath));
-            return;
-        }
-        if (mode == MODE_FOLDER) {
-            // Remember the folder so the next launch scans the same place.
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putString(PREF_DIR, dirPath).commit();
-        }
-
-        nowText.setText(R.string.scanning);
+        listInfo.setText(R.string.scanning);
         final int generation = ++scanGeneration;
 
-        // Query MediaStore (and possibly walk the folder) off the UI thread: both
-        // can be slow on a large library or a slow SD card.
+        // Both the MediaStore query and the folder walk can be slow on a large
+        // library or a slow SD card, so they run off the UI thread.
         Thread worker = new Thread(new Runnable() {
             public void run() {
-                List<Track> found = null;
+                // The indexed library first: real tags and durations.
+                List<Track> found = MediaLibrary.queryAll(MusicPlayerActivity.this, true);
 
-                if (mode == MODE_LIBRARY) {
-                    // Real ID3 tags and durations for everything the system has
-                    // indexed.
-                    found = MediaLibrary.queryAll(MusicPlayerActivity.this, true);
-                }
-
-                if (found == null || found.isEmpty()) {
-                    // Nothing indexed (or folder mode): fall back to a plain
-                    // directory walk, which only knows file names.
-                    if (dir.isDirectory()) {
-                        found = MediaLibrary.scanFolder(dir,
-                                getString(R.string.unknown_song),
-                                getString(R.string.unknown_artist),
-                                getString(R.string.unknown_album));
-                    } else if (found == null) {
-                        found = new ArrayList<Track>();
-                    }
+                if (found.isEmpty() && fallbackDir.isDirectory()) {
+                    // Nothing indexed yet: walk the conventional Music folder so
+                    // a freshly copied file is still playable.
+                    found = MediaLibrary.scanFolder(fallbackDir,
+                            getString(R.string.unknown_song),
+                            getString(R.string.unknown_artist),
+                            getString(R.string.unknown_album));
                 }
 
                 final List<Track> result = found;
@@ -392,43 +399,90 @@ public class MusicPlayerActivity extends ListActivity
         worker.start();
     }
 
-    private void updateModeUi() {
-        if (modeButton == null) {
-            return;
-        }
-        boolean library = scanMode == MODE_LIBRARY;
-        modeButton.setText(library
-                ? R.string.mode_toggle_to_folder
-                : R.string.mode_toggle_to_library);
-        modeInfo.setText(library
-                ? R.string.mode_library_info
-                : R.string.mode_folder_info);
-    }
-
     private void applyScanResult(List<Track> found, boolean replaceQueue) {
-        tracks.clear();
-        tracks.addAll(found);
-        adapter.notifyDataSetChanged();
-
-        // Only a user-initiated scan replaces what the service is playing.
-        // Otherwise returning to this activity would stop the current track.
-        if (replaceQueue && player != null) {
-            player.setQueue(tracks);
-        }
+        allTracks.clear();
+        allTracks.addAll(found);
 
         boolean playing = player != null && player.isPrepared();
-        if (tracks.isEmpty()) {
-            nowText.setText(playing ? R.string.playing_other : R.string.no_song);
-            emptyText.setVisibility(View.VISIBLE);
-            getListView().setVisibility(View.GONE);
-        } else {
-            // Do not overwrite the now-playing line while audio is running.
-            nowText.setText(playing
-                    ? getString(R.string.found_playing, tracks.size())
-                    : getString(R.string.found, tracks.size()));
-            emptyText.setVisibility(View.GONE);
-            getListView().setVisibility(View.VISIBLE);
+        if (replaceQueue && player != null) {
+            // The user asked for a fresh list; hand the service the full set and
+            // let updateFilter narrow it down. Passing the (possibly empty)
+            // filtered list here would make the service shut itself down.
+            playbackStarted = false;
+            player.setQueue(new ArrayList<Track>(allTracks));
+            playing = false;
         }
+
+        updateFilter();
+        if (!playing) {
+            listInfo.setText(getString(R.string.found, allTracks.size()));
+        }
+    }
+
+    /** Rebuild the visible list from the current query, then resync the service. */
+    private void updateFilter() {
+        String query = searchEdit.getText().toString().trim().toLowerCase();
+
+        visibleTracks.clear();
+        if (query.length() == 0) {
+            visibleTracks.addAll(allTracks);
+        } else {
+            for (int i = 0; i < allTracks.size(); i++) {
+                Track track = allTracks.get(i);
+                if (track.title.toLowerCase().indexOf(query) >= 0
+                        || track.artist.toLowerCase().indexOf(query) >= 0) {
+                    visibleTracks.add(track);
+                }
+            }
+        }
+        adapter.notifyDataSetChanged();
+
+        boolean playing = player != null && player.isPrepared();
+        if (playing) {
+            // The queue is fixed once playing, so searching only changes the
+            // list and never interrupts the current track.
+            listInfo.setText(getString(R.string.found_playing, visibleTracks.size()));
+        } else {
+            syncQueueWithVisible();
+            if (visibleTracks.isEmpty() && allTracks.size() > 0) {
+                listInfo.setText(R.string.no_match);
+            } else {
+                listInfo.setText(getString(R.string.found, visibleTracks.size()));
+            }
+        }
+
+        boolean empty = visibleTracks.isEmpty();
+        emptyText.setVisibility(empty ? View.VISIBLE : View.GONE);
+        getListView().setVisibility(empty ? View.GONE : View.VISIBLE);
+        if (empty && allTracks.size() > 0) {
+            emptyText.setText(R.string.no_match);
+        } else if (empty) {
+            emptyText.setText(R.string.empty);
+        }
+    }
+
+    /**
+     * Before playback starts, keep the service queue equal to the visible list so
+     * pressing play plays what the user is looking at. Once playback has begun
+     * the queue is left alone, otherwise a search would restart the track.
+     */
+    private void syncQueueWithVisible() {
+        if (player == null || playbackStarted) {
+            return;
+        }
+        List<Track> queue = player.getQueueSnapshot();
+        if (queue.size() == visibleTracks.size()) {
+            boolean same = true;
+            for (int i = 0; i < queue.size() && same; i++) {
+                if (queue.get(i) != visibleTracks.get(i)) {
+                    same = false;
+                }
+            }
+            if (same) {
+                return;
+            }
+        }
+        player.setQueue(new ArrayList<Track>(visibleTracks));
     }
 
     /** Extensions treated as audio; also used by MediaLibrary's folder scan. */
@@ -440,10 +494,6 @@ public class MusicPlayerActivity extends ListActivity
             }
         }
         return false;
-    }
-
-    private void toast(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
     // ------------------------------------------------------------------ adapter
@@ -458,11 +508,11 @@ public class MusicPlayerActivity extends ListActivity
         }
 
         public int getCount() {
-            return tracks.size();
+            return visibleTracks.size();
         }
 
         public Object getItem(int position) {
-            return tracks.get(position);
+            return visibleTracks.get(position);
         }
 
         public long getItemId(int position) {
@@ -474,7 +524,7 @@ public class MusicPlayerActivity extends ListActivity
             if (view == null) {
                 view = inflater.inflate(R.layout.row, parent, false);
             }
-            Track track = tracks.get(position);
+            Track track = visibleTracks.get(position);
 
             TextView title = (TextView) view.findViewById(R.id.row_title);
             TextView artist = (TextView) view.findViewById(R.id.row_artist);
@@ -488,9 +538,10 @@ public class MusicPlayerActivity extends ListActivity
                 time.setText("--:--");
             }
 
-            // Highlight the track that is currently loaded.
-            boolean active = player != null && position == player.getIndex();
-            title.setTextColor(active ? 0xFF3DA9FC : 0xFFF2F5F8);
+            // Highlight the row that is currently loaded. Resolved once per bind
+            // rather than per element, to keep binding linear.
+            Track current = player != null ? player.getCurrentTrack() : null;
+            title.setTextColor(track == current ? 0xFF3DA9FC : 0xFFF2F5F8);
             return view;
         }
     }
