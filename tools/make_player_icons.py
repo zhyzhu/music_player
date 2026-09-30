@@ -4,6 +4,7 @@ The stock Android buttons look poor, so the player controls are ImageButtons wit
 flat vector-ish glyphs drawn here. Output is plain PNG, one per density, drawn at
 4x and downsampled for smooth edges - the same approach as the launcher icons.
 """
+import math
 import os
 from PIL import Image, ImageDraw
 
@@ -33,28 +34,121 @@ def canvas(size):
     return img, ImageDraw.Draw(img), (size * SS) / 48.0
 
 
-def triangle(d, x0, y0, x1, y1, colour):
-    """Right pointing triangle filling the given box."""
-    d.polygon([(x0, y0), (x0, y1), (x1, (y0 + y1) / 2.0)], fill=colour)
+def rounded_bar(d, x0, y0, x1, y1, r, colour):
+    """Vertical rounded bar; the building block of the transport glyphs."""
+    d.rounded_rectangle([x0, y0, x1, y1], radius=r, fill=colour)
+
+
+def rounded_polygon(d, verts, r, colour):
+    """Filled polygon with circular corners.
+
+    PIL has no rounded polygon. For each vertex the two edges are shortened by
+    the tangent length and joined with an arc whose centre lies on the angle
+    bisector - stamping discs along the outline instead leaves a hollow shape,
+    because the discs do not merge at plausible sizes.
+    """
+    n = len(verts)
+    r = min(r, _min_half_edge(verts))
+    outline = []
+    # The tangent point where the previous corner's arc ended; the straight edge
+    # from there to this corner's first tangent point has to be emitted too, or
+    # the polygon closes arc-to-arc and comes out as a bowtie.
+    carry = None
+
+    for i in range(n):
+        prev = verts[(i - 1) % n]
+        cur = verts[i]
+        nxt = verts[(i + 1) % n]
+        p = _unit(prev[0] - cur[0], prev[1] - cur[1])
+        q = _unit(nxt[0] - cur[0], nxt[1] - cur[1])
+        angle = math.acos(max(-1.0, min(1.0, p[0] * q[0] + p[1] * q[1])))
+        if angle <= 0.0001:
+            continue
+        tangent = r / math.tan(angle / 2.0)
+        t1 = (cur[0] + p[0] * tangent, cur[1] + p[1] * tangent)
+        t2 = (cur[0] + q[0] * tangent, cur[1] + q[1] * tangent)
+        bisect = _unit(p[0] + q[0], p[1] + q[1])
+        centre = (cur[0] + bisect[0] * (r / math.sin(angle / 2.0)),
+                  cur[1] + bisect[1] * (r / math.sin(angle / 2.0)))
+
+        if carry is not None:
+            outline.append(carry)
+        outline.append(t1)
+
+        start = math.degrees(math.atan2(t1[1] - centre[1], t1[0] - centre[0]))
+        end = math.degrees(math.atan2(t2[1] - centre[1], t2[0] - centre[0]))
+        # Sweep must pass through the point where the two tangent lines would
+        # have met, i.e. the corner itself. Try both directions and keep the one
+        # that does so within a half turn.
+        vertex_dir = math.degrees(math.atan2(cur[1] - centre[1], cur[0] - centre[0]))
+        sweep_to = end
+        if not _sweeps_through(start, end, vertex_dir):
+            if _sweeps_through(start, end + 360.0, vertex_dir):
+                sweep_to = end + 360.0
+            elif _sweeps_through(start, end - 360.0, vertex_dir):
+                sweep_to = end - 360.0
+        steps = 14
+        for s in range(steps + 1):
+            angle_step = math.radians(start + (sweep_to - start) * (s / float(steps)))
+            outline.append((centre[0] + r * math.cos(angle_step),
+                            centre[1] + r * math.sin(angle_step)))
+        carry = t2
+
+    d.polygon(outline, fill=colour)
+
+
+def _sweeps_through(start, end, target):
+    """True when sweeping from start to end (in that direction) passes target."""
+    span = end - start
+    offset = ((target - start) % 360.0 + 360.0) % 360.0
+    if span >= 0:
+        return offset <= span + 0.001
+    return (offset - 360.0) >= span - 0.001
+
+
+def _unit(dx, dy):
+    length = (dx * dx + dy * dy) ** 0.5
+    return (0.0, 0.0) if length == 0 else (dx / length, dy / length)
+
+
+def _min_half_edge(verts):
+    """Cap on the corner radius so the shape cannot invert."""
+    shortest = None
+    n = len(verts)
+    for i in range(n):
+        ax, ay = verts[i]
+        bx, by = verts[(i + 1) % n]
+        edge = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
+        if shortest is None or edge < shortest:
+            shortest = edge
+    return shortest / 2.0 * 0.9
 
 
 def draw_play(d, u, colour):
-    triangle(d, 16 * u, 10 * u, 37 * u, 24 * u, colour)
+    """Solid play triangle with softened corners."""
+    rounded_polygon(d, [(15.5 * u, 11.0 * u), (15.5 * u, 37.0 * u), (37.5 * u, 24.0 * u)],
+                    3.2 * u, colour)
 
 
 def draw_pause(d, u, colour):
-    d.rectangle([15 * u, 10 * u, 21 * u, 38 * u], fill=colour)
-    d.rectangle([27 * u, 10 * u, 33 * u, 38 * u], fill=colour)
+    """Two rounded bars."""
+    r = 1.8 * u
+    rounded_bar(d, 15.5 * u, 12.0 * u, 21.5 * u, 36.0 * u, r, colour)
+    rounded_bar(d, 26.5 * u, 12.0 * u, 32.5 * u, 36.0 * u, r, colour)
 
 
 def draw_prev(d, u, colour):
-    d.rectangle([13 * u, 10 * u, 17 * u, 38 * u], fill=colour)
-    triangle(d, 34 * u, 10 * u, 18 * u, 24 * u, colour)
+    """Bar plus a left pointing triangle, both softened."""
+    rounded_bar(d, 12.5 * u, 13.5 * u, 16.3 * u, 34.5 * u, 1.8 * u, colour)
+    rounded_polygon(d, [(37.0 * u, 12.5 * u), (37.0 * u, 35.5 * u), (18.5 * u, 24.0 * u)],
+                    3.0 * u, colour)
 
 
 def draw_next(d, u, colour):
-    d.rectangle([31 * u, 10 * u, 35 * u, 38 * u], fill=colour)
-    triangle(d, 14 * u, 10 * u, 30 * u, 24 * u, colour)
+    """Bar plus a right pointing triangle, both softened."""
+    rounded_bar(d, 31.7 * u, 13.5 * u, 35.5 * u, 34.5 * u, 1.8 * u, colour)
+    rounded_polygon(d, [(11.0 * u, 12.5 * u), (11.0 * u, 35.5 * u), (29.5 * u, 24.0 * u)],
+                    3.0 * u, colour)
 
 
 def draw_shuffle(d, u, colour):

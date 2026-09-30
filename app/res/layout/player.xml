@@ -141,7 +141,7 @@
         <ImageButton
             android:id="@+id/player_prev"
             android:layout_width="0dp"
-            android:layout_height="56dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:background="@android:color/transparent"
             android:contentDescription="@string/btn_prev"
@@ -151,7 +151,7 @@
         <ImageButton
             android:id="@+id/player_play"
             android:layout_width="0dp"
-            android:layout_height="64dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:background="@android:color/transparent"
             android:contentDescription="@string/btn_play"
@@ -161,7 +161,7 @@
         <ImageButton
             android:id="@+id/player_next"
             android:layout_width="0dp"
-            android:layout_height="56dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:background="@android:color/transparent"
             android:contentDescription="@string/btn_next"
