@@ -30,6 +30,12 @@
             </intent-filter>
         </activity>
 
+        <!-- Full screen player, opened from the now-playing bar. -->
+        <activity
+            android:name=".PlayerActivity"
+            android:label="@string/player_title"
+            android:launchMode="singleTop" />
+
         <!-- Playback lives here so audio survives the activity going away. -->
         <service
             android:name=".TrackPlayer"

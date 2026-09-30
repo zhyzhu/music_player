@@ -4,18 +4,22 @@
     <string name="scan">扫描</string>
     <string name="clear">清空</string>
     <string name="search_hint">搜索歌曲、歌手或专辑</string>
-    <string name="group_flat">不分组</string>
-    <string name="group_by_album">按专辑</string>
-    <string name="group_by_folder">按文件夹</string>
+
+    <!-- 标签页 -->
+    <string name="tab_songs">列表</string>
+    <string name="tab_albums">专辑</string>
     <string name="group_unknown_album">未知专辑</string>
-    <string name="group_unknown_folder">未知位置</string>
     <string name="group_count">%1$d 首</string>
-    <string name="empty">没有找到音频文件。请把 mp3 放到 SD 卡的 Music 文件夹后点击“扫描”。</string>
-    <string name="no_match">没有匹配的歌曲</string>
-    <string name="unknown_artist">未知艺术家</string>
-    <string name="unknown_album">未知专辑</string>
-    <string name="unknown_song">未知歌曲</string>
-    <string name="various_artists">多位艺术家</string>
+
+    <!-- 播放页 -->
+    <string name="player_title">正在播放</string>
+    <string name="player_hint">播放由后台服务继续，退出此页不会中断。</string>
+
+    <!-- 底部控制栏 -->
+    <string name="btn_play_short">播放</string>
+    <string name="btn_pause_short">暂停</string>
+
+    <!-- 播放控制 -->
     <string name="btn_play">播放</string>
     <string name="btn_pause">暂停</string>
     <string name="btn_prev">上一首</string>
@@ -23,9 +27,16 @@
     <string name="time_zero">00:00 / 00:00</string>
     <string name="no_song">未选择歌曲</string>
     <string name="cd_album_art">专辑封面</string>
+
+    <!-- 状态与回退文案 -->
     <string name="scanning">正在扫描…</string>
     <string name="found">共 %1$d 首歌曲</string>
     <string name="found_playing">共 %1$d 首歌曲（播放中，搜索只影响列表）</string>
-    <string name="playing_other">播放中（当前曲目不在列表中）</string>
+    <string name="empty">没有找到音频文件。请把 mp3 放到 SD 卡的 Music 文件夹后点击“扫描”。</string>
+    <string name="no_match">没有匹配的歌曲</string>
+    <string name="unknown_artist">未知艺术家</string>
+    <string name="unknown_album">未知专辑</string>
+    <string name="unknown_song">未知歌曲</string>
+    <string name="various_artists">多位艺术家</string>
     <string name="error_play">无法播放该文件</string>
 </resources>

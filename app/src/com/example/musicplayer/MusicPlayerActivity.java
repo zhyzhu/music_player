@@ -6,11 +6,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import android.app.ListActivity;
+import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
@@ -18,33 +19,35 @@ import android.os.IBinder;
 import android.os.Message;
 import android.text.Editable;
 import android.text.TextWatcher;
-import android.graphics.Bitmap;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.ListView;
-import android.widget.SeekBar;
+import android.widget.TabHost;
 import android.widget.TextView;
 
 /**
- * Music player UI for Android 2.2 (API level 8).
+ * Main screen for Android 2.2 (API level 8): two tabs over the same library.
  *
- * Songs are discovered automatically: the MediaStore index first, then the Music
- * folder on the SD card for anything the media scanner has not indexed. The user
- * never has to know or type a path - the search box filters by title or artist.
+ * - 列表: every song, in the order the library returned them
+ * - 专辑: the same songs grouped by album, with headers
+ *
+ * The now-playing bar along the bottom is deliberately thin; tapping it opens
+ * {@link PlayerActivity}, where the transport controls and cover live.
  *
  * Playback lives in {@link TrackPlayer}, a foreground service, so audio keeps
  * playing when this activity is not in the foreground.
  *
  * Deliberately written in Java 6 syntax and limited to API 8 APIs.
  */
-public class MusicPlayerActivity extends ListActivity
+public class MusicPlayerActivity extends Activity
         implements View.OnClickListener,
-                   SeekBar.OnSeekBarChangeListener,
                    TrackPlayer.Listener {
 
     /** File extensions treated as audio during a folder scan. */
@@ -55,29 +58,14 @@ public class MusicPlayerActivity extends ListActivity
     /** Folder scanned when nothing is indexed yet; no need to ask the user. */
     private static final String DEFAULT_FOLDER = "Music";
 
-    /** How the list is segmented. */
-    private static final int GROUP_NONE = 0;
-    private static final int GROUP_ALBUM = 1;
-    private static final int GROUP_FOLDER = 2;
-
-    private static final String PREFS = "player";
-    private static final String PREF_GROUP = "group";
-
-    private static final int MSG_PROGRESS = 1;
     private static final int MSG_FILTER = 2;
-    private static final long PROGRESS_INTERVAL_MS = 1000L;
     /** Keystrokes arrive faster than a filter needs to run. */
     private static final long FILTER_DELAY_MS = 250L;
 
-    /** Every track found by the last scan. */
+    /** Every track found by the last scan, in library order. */
     private final List<Track> allTracks = new ArrayList<Track>();
-    /** Songs matching the search, in playback order. */
-    private final List<Track> displayedTracks = new ArrayList<Track>();
-    /** What the ListView actually shows: group headers interleaved with songs. */
-    private final List<Row> rows = new ArrayList<Row>();
-    private TrackAdapter adapter;
 
-    /** One entry of the segmented list. */
+    /** One entry of the segmented album list. */
     private static final class Row {
         static final int TYPE_GROUP = 0;
         static final int TYPE_TRACK = 1;
@@ -115,28 +103,34 @@ public class MusicPlayerActivity extends ListActivity
     private EditText searchEdit;
     private Button clearButton;
     private Button playButton;
-    private Button groupButton;
     private ImageView artView;
     private TextView listInfo;
     private TextView nowText;
     private TextView nowArtist;
-    private TextView timeText;
     private TextView emptyText;
-    private SeekBar seekBar;
+    private View nowBar;
+    private View playHitArea;
+    private TabHost tabHost;
+    private ListView songsList;
+    private ListView albumsList;
+
+    /** Flat view: matching songs in library order. */
+    private final List<Track> songsResults = new ArrayList<Track>();
+    /** Album view: matching songs in grouped order. */
+    private final List<Track> albumResults = new ArrayList<Track>();
+    private final List<Row> songRows = new ArrayList<Row>();
+    private final List<Row> albumRows = new ArrayList<Row>();
+
+    private TrackAdapter songsAdapter;
+    private TrackAdapter albumsAdapter;
 
     private int scanGeneration;
-    private boolean userSeeking;
-    private boolean progressPosted;
-    private int groupMode = GROUP_NONE;
     /** Guards against a slow cover decode overwriting a newer one. */
     private int artToken;
 
     private final Handler handler = new Handler() {
         public void handleMessage(Message msg) {
-            if (msg.what == MSG_PROGRESS) {
-                progressPosted = false;
-                updateProgress();
-            } else if (msg.what == MSG_FILTER) {
+            if (msg.what == MSG_FILTER) {
                 updateFilter();
             }
         }
@@ -149,18 +143,15 @@ public class MusicPlayerActivity extends ListActivity
             playbackStarted = player.isPrepared();
 
             // Never clobber the service's queue here. When this activity is
-            // recreated (back button, then relaunch from the notification) the
-            // bind callback runs before the scan finishes, so pushing the local
-            // list would hand the service an empty queue, which releases the
-            // player and stops playback. Adopt whatever the service already has
-            // and only seed it when the service has nothing.
+            // recreated the bind callback runs before the scan finishes, so
+            // pushing the local list would hand the service an empty queue,
+            // which releases the player and stops playback.
             List<Track> serviceQueue = player.getQueueSnapshot();
             if (!serviceQueue.isEmpty()) {
                 allTracks.clear();
                 allTracks.addAll(serviceQueue);
-                adapter.notifyDataSetChanged();
-            } else if (!displayedTracks.isEmpty()) {
-                player.setQueue(new ArrayList<Track>(displayedTracks));
+            } else if (!songsResults.isEmpty()) {
+                player.setQueue(new ArrayList<Track>(songsResults));
             }
             updateFilter();
             onPlayerStateChanged();
@@ -199,37 +190,97 @@ public class MusicPlayerActivity extends ListActivity
         searchEdit = (EditText) findViewById(R.id.search);
         clearButton = (Button) findViewById(R.id.btn_clear);
         Button scanButton = (Button) findViewById(R.id.btn_scan);
-        groupButton = (Button) findViewById(R.id.btn_group);
-        playButton = (Button) findViewById(R.id.btn_play);
-        Button prevButton = (Button) findViewById(R.id.btn_prev);
-        Button nextButton = (Button) findViewById(R.id.btn_next);
         listInfo = (TextView) findViewById(R.id.list_info);
+        emptyText = (TextView) findViewById(R.id.empty);
         artView = (ImageView) findViewById(R.id.art);
         nowText = (TextView) findViewById(R.id.now);
         nowArtist = (TextView) findViewById(R.id.now_artist);
-        timeText = (TextView) findViewById(R.id.time);
-        emptyText = (TextView) findViewById(R.id.empty);
-        seekBar = (SeekBar) findViewById(R.id.seek);
+        nowBar = findViewById(R.id.now_bar);
+        playButton = (Button) findViewById(R.id.btn_play);
 
         scanButton.setOnClickListener(this);
         clearButton.setOnClickListener(this);
-        groupButton.setOnClickListener(this);
-        playButton.setOnClickListener(this);
-        prevButton.setOnClickListener(this);
-        nextButton.setOnClickListener(this);
-        seekBar.setOnSeekBarChangeListener(this);
         searchEdit.addTextChangedListener(searchWatcher);
 
-        adapter = new TrackAdapter(this);
-        setListAdapter(adapter);
-
-        // Remember how the user prefers the list segmented.
-        groupMode = getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_GROUP, GROUP_NONE);
-        updateGroupButton();
+        setupTabs();
+        setupNowBar();
 
         // Automatic scan on start: results are shown, but the service keeps
-        // whatever it is already playing, so returning here cannot interrupt it.
+        // whatever it is already playing.
         scan(false);
+    }
+
+    private void setupTabs() {
+        tabHost = (TabHost) findViewById(android.R.id.tabhost);
+        tabHost.setup();
+
+        // The content views are children of the tab content frame, so they are
+        // handed to the tabs directly; no activity is nested inside a tab.
+        songsList = (ListView) findViewById(R.id.list_songs);
+        albumsList = (ListView) findViewById(R.id.list_albums);
+
+        songsAdapter = new TrackAdapter(this, songRows, songsResults);
+        albumsAdapter = new TrackAdapter(this, albumRows, albumResults);
+        songsList.setAdapter(songsAdapter);
+        albumsList.setAdapter(albumsAdapter);
+
+        tabHost.addTab(tabHost.newTabSpec("songs")
+                .setIndicator(getString(R.string.tab_songs))
+                .setContent(R.id.list_songs));
+        tabHost.addTab(tabHost.newTabSpec("albums")
+                .setIndicator(getString(R.string.tab_albums))
+                .setContent(R.id.list_albums));
+
+        songsList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                onRowClick(songRows, songsResults, position);
+            }
+        });
+        albumsList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                onRowClick(albumRows, albumResults, position);
+            }
+        });
+    }
+
+    /**
+     * The bar is a single touch target: a tap on the play button toggles
+     * playback, a tap anywhere else opens the player page. Two overlapping click
+     * listeners would be ambiguous, so the coordinates decide.
+     */
+    private void setupNowBar() {
+        playHitArea = playButton;
+        nowBar.setOnTouchListener(new View.OnTouchListener() {
+            public boolean onTouch(View v, MotionEvent event) {
+                if (event.getAction() != MotionEvent.ACTION_UP) {
+                    // Still consume the event so the bar shows feedback.
+                    return true;
+                }
+                if (isInside(playHitArea, event)) {
+                    if (player != null) {
+                        player.toggle();
+                        if (player.isPlaying()) {
+                            startPlaybackForeground();
+                        }
+                    }
+                } else {
+                    startActivity(new Intent(MusicPlayerActivity.this, PlayerActivity.class));
+                }
+                return true;
+            }
+        });
+    }
+
+    private static boolean isInside(View view, MotionEvent event) {
+        if (view == null) {
+            return false;
+        }
+        int[] location = new int[2];
+        view.getLocationOnScreen(location);
+        float x = event.getRawX();
+        float y = event.getRawY();
+        return x >= location[0] && x <= location[0] + view.getWidth()
+                && y >= location[1] && y <= location[1] + view.getHeight();
     }
 
     @Override
@@ -243,18 +294,16 @@ public class MusicPlayerActivity extends ListActivity
     @Override
     protected void onStop() {
         super.onStop();
-        stopProgress();
         try {
             unbindService(connection);
         } catch (IllegalArgumentException ignored) {
-            // Not bound (for example when onCreate's bind already failed).
+            // Not bound.
         }
     }
 
     @Override
     protected void onDestroy() {
         handler.removeMessages(MSG_FILTER);
-        stopProgress();
         super.onDestroy();
     }
 
@@ -266,36 +315,11 @@ public class MusicPlayerActivity extends ListActivity
             scan(true);
         } else if (id == R.id.btn_clear) {
             searchEdit.setText("");
-        } else if (id == R.id.btn_group) {
-            // Cycle flat -> by album -> by folder.
-            groupMode = (groupMode + 1) % 3;
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putInt(PREF_GROUP, groupMode).commit();
-            updateGroupButton();
-            updateFilter();
-        } else if (id == R.id.btn_play) {
-            if (player != null) {
-                player.toggle();
-                if (player.isPlaying()) {
-                    startPlaybackForeground();
-                }
-                postProgress();
-            }
-        } else if (id == R.id.btn_prev) {
-            if (player != null) {
-                player.previous();
-                startPlaybackForeground();
-            }
-        } else if (id == R.id.btn_next) {
-            if (player != null) {
-                player.next();
-                startPlaybackForeground();
-            }
         }
     }
 
-    @Override
-    protected void onListItemClick(ListView l, View v, int position, long itemId) {
+    /** Shared click handling for both tabs. */
+    private void onRowClick(List<Row> rows, List<Track> playbackOrder, int position) {
         if (player == null || position < 0 || position >= rows.size()) {
             return;
         }
@@ -304,7 +328,7 @@ public class MusicPlayerActivity extends ListActivity
             return; // Group headers are labels, not playable entries.
         }
         Track clicked = row.track;
-        int trackIndex = displayedTracks.indexOf(clicked);
+        int trackIndex = playbackOrder.indexOf(clicked);
         if (trackIndex < 0) {
             return;
         }
@@ -313,12 +337,12 @@ public class MusicPlayerActivity extends ListActivity
         if (serviceIndex >= 0 && serviceIndex == player.getIndex() && player.isPrepared()) {
             player.toggle();
         } else {
-            // Play the displayed list, so next/previous follow what the user sees.
-            player.play(new ArrayList<Track>(displayedTracks), trackIndex);
+            // Play the list as displayed in this tab, so next/previous follow
+            // what the user is looking at.
+            player.play(new ArrayList<Track>(playbackOrder), trackIndex);
             playbackStarted = true;
         }
         startPlaybackForeground();
-        postProgress();
     }
 
     /** Position of a track in the service queue, matched by identity then name. */
@@ -348,7 +372,7 @@ public class MusicPlayerActivity extends ListActivity
 
     public void onPlayerStateChanged() {
         boolean playing = player != null && player.isPlaying();
-        playButton.setText(playing ? R.string.btn_pause : R.string.btn_play);
+        playButton.setText(playing ? R.string.btn_pause_short : R.string.btn_play_short);
 
         Track current = player != null ? player.getCurrentTrack() : null;
         if (current == null) {
@@ -360,115 +384,15 @@ public class MusicPlayerActivity extends ListActivity
             nowArtist.setText(current.artist);
             loadArtworkAsync(current);
         }
-        adapter.notifyDataSetChanged();
-        if (playing) {
-            postProgress();
-        } else {
-            stopProgress();
+        if (songsAdapter != null) {
+            songsAdapter.notifyDataSetChanged();
         }
-    }
-
-    private void updateProgress() {
-        // Guard: the service may have gone away between the message being posted
-        // and delivered.
-        if (player == null || !player.isPrepared()) {
-            return;
-        }
-        int duration = player.getDuration();
-        if (duration > 0 && seekBar.getMax() != duration) {
-            seekBar.setMax(duration);
-        }
-        if (!userSeeking && duration > 0) {
-            seekBar.setProgress(player.getPosition());
-        }
-        timeText.setText(formatTime(player.getPosition()) + " / " + formatTime(duration));
-        if (player.isPlaying()) {
-            postProgress();
-        }
-    }
-
-    // --------------------------------------------------------------- artwork
-
-    /** Paint the cover for a track, or the placeholder when there is none. */
-    private void showArtwork(Bitmap art) {
-        if (artView == null) {
-            return;
-        }
-        if (art != null) {
-            artView.setImageBitmap(art);
-            return;
-        }
-        int edge = artView.getWidth();
-        if (edge <= 0) {
-            // Not laid out yet; the scaled size is close enough for a placeholder.
-            edge = 64;
-        }
-        artView.setImageBitmap(Artwork.placeholder(edge, 0xFF1B2027, 0xFF8B97A6));
-    }
-
-    /**
-     * Decode the cover off the UI thread.
-     *
-     * Reading a tag out of a file can take long enough to drop frames, and the
-     * result is only applied when the track has not changed in the meantime.
-     */
-    private void loadArtworkAsync(final Track track) {
-        if (artView == null || Artwork.isCached(track)) {
-            showArtwork(Artwork.load(this, track, track.albumId));
-            return;
-        }
-        showArtwork(null); // placeholder while decoding
-        final int token = ++artToken;
-        Thread worker = new Thread(new Runnable() {
-            public void run() {
-                final Bitmap art = Artwork.load(MusicPlayerActivity.this, track, track.albumId);
-                runOnUiThread(new Runnable() {
-                    public void run() {
-                        if (token != artToken) {
-                            return; // A newer track superseded this request.
-                        }
-                        showArtwork(art);
-                    }
-                });
-            }
-        }, "cover-load");
-        worker.setPriority(Thread.MIN_PRIORITY);
-        worker.start();
-    }
-
-    // --------------------------------------------------------------- seek bar
-
-    public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
-        if (fromUser) {
-            int duration = player != null ? player.getDuration() : 0;
-            timeText.setText(formatTime(progress) + " / " + formatTime(duration));
-        }
-    }
-
-    public void onStartTrackingTouch(SeekBar bar) {
-        userSeeking = true;
-    }
-
-    public void onStopTrackingTouch(SeekBar bar) {
-        userSeeking = false;
-        if (player != null) {
-            player.seekTo(bar.getProgress());
+        if (albumsAdapter != null) {
+            albumsAdapter.notifyDataSetChanged();
         }
     }
 
     // --------------------------------------------------------------- progress
-
-    private void postProgress() {
-        if (!progressPosted) {
-            progressPosted = true;
-            handler.sendEmptyMessageDelayed(MSG_PROGRESS, PROGRESS_INTERVAL_MS);
-        }
-    }
-
-    private void stopProgress() {
-        handler.removeMessages(MSG_PROGRESS);
-        progressPosted = false;
-    }
 
     private static String formatTime(int millis) {
         if (millis < 0) {
@@ -498,8 +422,6 @@ public class MusicPlayerActivity extends ListActivity
         listInfo.setText(R.string.scanning);
         final int generation = ++scanGeneration;
 
-        // Both the MediaStore query and the folder walk can be slow on a large
-        // library or a slow SD card, so they run off the UI thread.
         Thread worker = new Thread(new Runnable() {
             public void run() {
                 // The indexed library first: real tags and durations.
@@ -533,96 +455,85 @@ public class MusicPlayerActivity extends ListActivity
         allTracks.clear();
         allTracks.addAll(found);
 
-        boolean playing = player != null && player.isPrepared();
         if (replaceQueue && player != null) {
-            // The user asked for a fresh list; hand the service the full set and
-            // let updateFilter narrow it down. Passing the (possibly empty)
-            // filtered list here would make the service shut itself down.
+            // The user asked for a fresh list; playback starts from scratch.
             playbackStarted = false;
             player.setQueue(new ArrayList<Track>(allTracks));
-            playing = false;
         }
 
         updateFilter();
-        if (!playing) {
-            listInfo.setText(getString(R.string.found, allTracks.size()));
-        }
     }
 
-    /** Rebuild the visible list from the current query, then resync the service. */
+    /** Rebuild both lists from the current query, then resync the service. */
     private void updateFilter() {
         String query = searchEdit.getText().toString().trim().toLowerCase();
-        String unknownAlbum = getString(R.string.group_unknown_album);
-        String unknownFolder = getString(R.string.group_unknown_folder);
 
-        displayedTracks.clear();
+        // Flat tab: library order.
+        songsResults.clear();
         if (query.length() == 0) {
-            displayedTracks.addAll(allTracks);
+            songsResults.addAll(allTracks);
         } else {
             for (int i = 0; i < allTracks.size(); i++) {
                 Track track = allTracks.get(i);
-                // Album is searchable too, since the list can be segmented by it.
-                if (track.title.toLowerCase().indexOf(query) >= 0
-                        || track.artist.toLowerCase().indexOf(query) >= 0
-                        || track.album.toLowerCase().indexOf(query) >= 0) {
-                    displayedTracks.add(track);
+                if (matches(track, query)) {
+                    songsResults.add(track);
                 }
             }
         }
-        buildRows(unknownAlbum, unknownFolder);
-        adapter.notifyDataSetChanged();
+
+        // Album tab: the same matches, grouped.
+        buildAlbumRows(query);
+
+        if (songsAdapter != null) {
+            songsAdapter.notifyDataSetChanged();
+        }
+        if (albumsAdapter != null) {
+            albumsAdapter.notifyDataSetChanged();
+        }
 
         boolean playing = player != null && player.isPrepared();
-        if (playing) {
-            // The queue is fixed once playing, so searching only changes the
-            // list and never interrupts the current track.
-            listInfo.setText(getString(R.string.found_playing, displayedTracks.size()));
+        if (!playing) {
+            syncQueueWithSongs();
+        }
+        if (songsResults.isEmpty() && allTracks.size() > 0) {
+            listInfo.setText(R.string.no_match);
+        } else if (playing) {
+            listInfo.setText(getString(R.string.found_playing, songsResults.size()));
         } else {
-            syncQueueWithVisible();
-            if (displayedTracks.isEmpty() && allTracks.size() > 0) {
-                listInfo.setText(R.string.no_match);
-            } else {
-                listInfo.setText(getString(R.string.found, displayedTracks.size()));
-            }
+            listInfo.setText(getString(R.string.found, songsResults.size()));
         }
 
-        boolean empty = displayedTracks.isEmpty();
+        boolean empty = songsResults.isEmpty();
         emptyText.setVisibility(empty ? View.VISIBLE : View.GONE);
-        getListView().setVisibility(empty ? View.GONE : View.VISIBLE);
-        if (empty && allTracks.size() > 0) {
-            emptyText.setText(R.string.no_match);
-        } else if (empty) {
-            emptyText.setText(R.string.empty);
-        }
+        emptyText.setText(allTracks.size() > 0 ? R.string.no_match : R.string.empty);
+        tabHost.setVisibility(empty ? View.GONE : View.VISIBLE);
+    }
+
+    private static boolean matches(Track track, String query) {
+        return track.title.toLowerCase().indexOf(query) >= 0
+                || track.artist.toLowerCase().indexOf(query) >= 0
+                || track.album.toLowerCase().indexOf(query) >= 0;
     }
 
     /**
-     * Fill {@link #rows} from {@link #displayedTracks}.
+     * Fill the album tab's rows and its playback order.
      *
-     * Grouping only changes how the list is presented: displayedTracks stays flat
-     * and in playback order, so the queue handed to the service is unaffected.
+     * Album is the only grouping left: the folder grouping experiment is gone,
+     * since the album tab answers the same question with better labels.
      */
-    private void buildRows(String unknownAlbum, String unknownFolder) {
-        rows.clear();
-        if (groupMode == GROUP_NONE) {
-            for (int i = 0; i < displayedTracks.size(); i++) {
-                rows.add(Row.track(displayedTracks.get(i)));
-            }
-            return;
-        }
+    private void buildAlbumRows(String query) {
+        String unknownAlbum = getString(R.string.group_unknown_album);
 
-        // Insertion order preserved, so groups appear in the order of the list.
+        // Insertion order preserved, so albums appear in library order.
         LinkedHashMap<String, List<Track>> groups =
                 new LinkedHashMap<String, List<Track>>();
-        for (int i = 0; i < displayedTracks.size(); i++) {
-            Track track = displayedTracks.get(i);
-            String key;
-            if (groupMode == GROUP_ALBUM) {
-                key = track.album != null && track.album.length() > 0
-                        ? track.album : unknownAlbum;
-            } else {
-                key = folderOf(track.path, unknownFolder);
+        for (int i = 0; i < allTracks.size(); i++) {
+            Track track = allTracks.get(i);
+            if (query.length() > 0 && !matches(track, query)) {
+                continue;
             }
+            String key = track.album != null && track.album.length() > 0
+                    ? track.album : unknownAlbum;
             List<Track> bucket = groups.get(key);
             if (bucket == null) {
                 bucket = new ArrayList<Track>();
@@ -631,66 +542,33 @@ public class MusicPlayerActivity extends ListActivity
             bucket.add(track);
         }
 
-        // Rebuild displayedTracks in grouped order as well, so a click maps to the
-        // right playback position with a plain indexOf.
-        displayedTracks.clear();
+        albumRows.clear();
+        albumResults.clear();
         for (Map.Entry<String, List<Track>> entry : groups.entrySet()) {
             List<Track> bucket = entry.getValue();
-            rows.add(Row.group(entry.getKey(), bucket.size()));
+            albumRows.add(Row.group(entry.getKey(), bucket.size()));
             for (int i = 0; i < bucket.size(); i++) {
                 Track track = bucket.get(i);
-                rows.add(Row.track(track));
-                displayedTracks.add(track);
+                albumRows.add(Row.track(track));
+                albumResults.add(track);
             }
         }
     }
 
     /**
-     * Group label for a track in folder mode: the name of the folder it sits in.
-     *
-     * Two folders with the same name but different parents share a group. That is
-     * the readable choice for a label; the paths are no help to the user when the
-     * whole library already lives under a common root.
-     */
-    private static String folderOf(String path, String fallback) {
-        if (path == null || path.length() == 0) {
-            return fallback;
-        }
-        File parent = new File(path).getParentFile();
-        if (parent == null) {
-            return fallback;
-        }
-        String name = parent.getName();
-        return name.length() > 0 ? name : parent.getAbsolutePath();
-    }
-
-    private void updateGroupButton() {
-        if (groupButton == null) {
-            return;
-        }
-        if (groupMode == GROUP_NONE) {
-            groupButton.setText(R.string.group_by_album);
-        } else if (groupMode == GROUP_ALBUM) {
-            groupButton.setText(R.string.group_by_folder);
-        } else {
-            groupButton.setText(R.string.group_flat);
-        }
-    }
-
-    /**
-     * Before playback starts, keep the service queue equal to the visible list so
+     * Before playback starts, keep the service queue equal to the flat list so
      * pressing play plays what the user is looking at. Once playback has begun
      * the queue is left alone, otherwise a search would restart the track.
      */
-    private void syncQueueWithVisible() {
+    private void syncQueueWithSongs() {
         if (player == null || playbackStarted) {
             return;
         }
         List<Track> queue = player.getQueueSnapshot();
-        if (queue.size() == displayedTracks.size()) {
+        if (queue.size() == songsResults.size()) {
             boolean same = true;
             for (int i = 0; i < queue.size() && same; i++) {
-                if (queue.get(i) != displayedTracks.get(i)) {
+                if (queue.get(i) != songsResults.get(i)) {
                     same = false;
                 }
             }
@@ -698,7 +576,7 @@ public class MusicPlayerActivity extends ListActivity
                 return;
             }
         }
-        player.setQueue(new ArrayList<Track>(displayedTracks));
+        player.setQueue(new ArrayList<Track>(songsResults));
     }
 
     /** Extensions treated as audio; also used by MediaLibrary's folder scan. */
@@ -712,15 +590,57 @@ public class MusicPlayerActivity extends ListActivity
         return false;
     }
 
-    // ------------------------------------------------------------------ adapter
+    // --------------------------------------------------------------- artwork
 
-    /** Renders the track list; kept inline to avoid an extra source file. */
+    private void showArtwork(Bitmap art) {
+        if (art != null) {
+            artView.setImageBitmap(art);
+            return;
+        }
+        int edge = artView.getWidth();
+        if (edge <= 0) {
+            edge = 40;
+        }
+        artView.setImageBitmap(Artwork.placeholder(edge, 0xFF1B2027, 0xFF8B97A6));
+    }
+
+    private void loadArtworkAsync(final Track track) {
+        if (Artwork.isCached(track)) {
+            showArtwork(Artwork.load(this, track, track.albumId));
+            return;
+        }
+        showArtwork(null); // placeholder while decoding
+        final int token = ++artToken;
+        Thread worker = new Thread(new Runnable() {
+            public void run() {
+                final Bitmap art = Artwork.load(MusicPlayerActivity.this, track, track.albumId);
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (token != artToken) {
+                            return; // A newer track superseded this request.
+                        }
+                        showArtwork(art);
+                    }
+                });
+            }
+        }, "cover-load");
+        worker.setPriority(Thread.MIN_PRIORITY);
+        worker.start();
+    }
+
+    // ------------------------------------------------------------------ adapters
+
+    /** Renders one tab: group headers interleaved with track rows. */
     private class TrackAdapter extends BaseAdapter {
 
         private final LayoutInflater inflater;
+        private final List<Row> rows;
+        private final List<Track> tracks;
 
-        TrackAdapter(Context context) {
-            inflater = LayoutInflater.from(context);
+        TrackAdapter(Context context, List<Row> rows, List<Track> tracks) {
+            this.inflater = LayoutInflater.from(context);
+            this.rows = rows;
+            this.tracks = tracks;
         }
 
         public int getCount() {
@@ -735,7 +655,7 @@ public class MusicPlayerActivity extends ListActivity
             return position;
         }
 
-        // Two view types: group headers, which must not be inflated as track rows.
+        // Two view types: group headers must not be inflated as track rows.
 
         @Override
         public int getViewTypeCount() {
@@ -761,17 +681,16 @@ public class MusicPlayerActivity extends ListActivity
         public View getView(int position, View convertView, ViewGroup parent) {
             Row row = rows.get(position);
             if (row.isGroup()) {
-                return getGroupView(position, convertView, parent);
+                return getGroupView(row, convertView, parent);
             }
             return getTrackView(row.track, convertView, parent);
         }
 
-        private View getGroupView(int position, View convertView, ViewGroup parent) {
+        private View getGroupView(Row row, View convertView, ViewGroup parent) {
             View view = convertView;
             if (view == null || view.findViewById(R.id.group_name) == null) {
                 view = inflater.inflate(R.layout.group_header, parent, false);
             }
-            Row row = rows.get(position);
             TextView name = (TextView) view.findViewById(R.id.group_name);
             TextView count = (TextView) view.findViewById(R.id.group_count);
             name.setText(row.label);

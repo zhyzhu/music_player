@@ -1,14 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Host layout: the tab strip, the two segment lists, and a compact now-playing
+  bar that opens the player page when tapped.
+
+  Both ListViews live here and are handed to the tabs with
+  TabSpec.setContent(View), so no activity is nested inside the tabs.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="fill_parent"
     android:layout_height="fill_parent"
-    android:orientation="vertical"
     android:background="@color/bg"
-    android:focusable="true"
-    android:focusableInTouchMode="true">
+    android:orientation="vertical">
 
     <TextView
-        android:id="@+id/title"
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
         android:background="@color/panel"
@@ -21,8 +25,8 @@
     <LinearLayout
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
         android:gravity="center_vertical"
+        android:orientation="horizontal"
         android:padding="6dp">
 
         <EditText
@@ -32,8 +36,8 @@
             android:layout_weight="1"
             android:background="@drawable/search_box"
             android:hint="@string/search_hint"
-            android:singleLine="true"
             android:imeOptions="actionDone"
+            android:singleLine="true"
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_hint"
             android:textSize="13sp" />
@@ -58,42 +62,58 @@
             android:textSize="13sp" />
     </LinearLayout>
 
-    <LinearLayout
+    <TextView
+        android:id="@+id/list_info"
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
         android:paddingBottom="2dp"
         android:paddingLeft="8dp"
-        android:paddingRight="8dp">
+        android:paddingRight="8dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="11sp" />
 
-        <TextView
-            android:id="@+id/list_info"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="@color/text_secondary"
-            android:textSize="11sp" />
-
-        <Button
-            android:id="@+id/btn_group"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginLeft="6dp"
-            android:minWidth="0dp"
-            android:text="@string/group_by_album"
-            android:textSize="11sp" />
-    </LinearLayout>
-
-    <ListView
-        android:id="@android:id/list"
+    <TabHost
+        android:id="@android:id/tabhost"
         android:layout_width="fill_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:cacheColorHint="#00000000"
-        android:divider="@color/divider"
-        android:dividerHeight="1px"
-        android:fastScrollEnabled="true" />
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="fill_parent"
+            android:layout_height="fill_parent"
+            android:orientation="vertical">
+
+            <TabWidget
+                android:id="@android:id/tabs"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content" />
+
+            <FrameLayout
+                android:id="@android:id/tabcontent"
+                android:layout_width="fill_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <ListView
+                    android:id="@+id/list_songs"
+                    android:layout_width="fill_parent"
+                    android:layout_height="fill_parent"
+                    android:cacheColorHint="#00000000"
+                    android:divider="@color/divider"
+                    android:dividerHeight="1px"
+                    android:fastScrollEnabled="true" />
+
+                <ListView
+                    android:id="@+id/list_albums"
+                    android:layout_width="fill_parent"
+                    android:layout_height="fill_parent"
+                    android:cacheColorHint="#00000000"
+                    android:divider="@color/divider"
+                    android:dividerHeight="1px"
+                    android:fastScrollEnabled="true" />
+            </FrameLayout>
+        </LinearLayout>
+    </TabHost>
 
     <TextView
         android:id="@+id/empty"
@@ -105,20 +125,24 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
+    <!-- Compact now-playing bar. Tapping it opens the player page; tapping the
+         play button toggles playback. -->
     <LinearLayout
+        android:id="@+id/now_bar"
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
         android:background="@color/panel"
+        android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingBottom="6dp"
+        android:paddingBottom="5dp"
         android:paddingLeft="8dp"
         android:paddingRight="8dp"
-        android:paddingTop="6dp">
+        android:paddingTop="5dp">
 
         <ImageView
             android:id="@+id/art"
-            android:layout_width="64dp"
-            android:layout_height="64dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:background="@drawable/art_background"
             android:contentDescription="@string/cd_album_art"
             android:scaleType="centerCrop" />
@@ -129,17 +153,17 @@
             android:layout_gravity="center_vertical"
             android:layout_weight="1"
             android:orientation="vertical"
-            android:paddingLeft="10dp">
+            android:paddingLeft="8dp">
 
             <TextView
                 android:id="@+id/now"
                 android:layout_width="fill_parent"
                 android:layout_height="wrap_content"
-                android:ellipsize="marquee"
+                android:ellipsize="end"
                 android:singleLine="true"
                 android:text="@string/no_song"
                 android:textColor="@color/text_primary"
-                android:textSize="14sp"
+                android:textSize="13sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -147,64 +171,19 @@
                 android:layout_width="fill_parent"
                 android:layout_height="wrap_content"
                 android:ellipsize="end"
-                android:paddingTop="3dp"
                 android:singleLine="true"
-                android:textColor="@color/accent"
-                android:textSize="12sp" />
+                android:paddingTop="1dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
         </LinearLayout>
-    </LinearLayout>
-
-    <SeekBar
-        android:id="@+id/seek"
-        android:layout_width="fill_parent"
-        android:layout_height="wrap_content"
-        android:paddingLeft="8dp"
-        android:paddingRight="8dp" />
-
-    <TextView
-        android:id="@+id/time"
-        android:layout_width="fill_parent"
-        android:layout_height="wrap_content"
-        android:paddingBottom="4dp"
-        android:paddingLeft="8dp"
-        android:paddingRight="8dp"
-        android:text="@string/time_zero"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp" />
-
-    <LinearLayout
-        android:layout_width="fill_parent"
-        android:layout_height="wrap_content"
-        android:background="@color/panel"
-        android:orientation="horizontal"
-        android:paddingBottom="8dp"
-        android:paddingTop="8dp">
-
-        <Button
-            android:id="@+id/btn_prev"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:minWidth="0dp"
-            android:text="@string/btn_prev"
-            android:textSize="13sp" />
 
         <Button
             android:id="@+id/btn_play"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
+            android:layout_marginLeft="6dp"
             android:minWidth="0dp"
-            android:text="@string/btn_play"
-            android:textSize="13sp" />
-
-        <Button
-            android:id="@+id/btn_next"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:minWidth="0dp"
-            android:text="@string/btn_next"
-            android:textSize="13sp" />
+            android:text="@string/btn_play_short"
+            android:textSize="12sp" />
     </LinearLayout>
 </LinearLayout>

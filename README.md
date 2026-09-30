@@ -9,14 +9,14 @@
   - 优先通过 `MediaStore` 读取系统媒体库，显示真实 ID3 标签（标题／艺术家／专辑）与时长
   - 媒体库为空时自动回退为遍历 SD 卡的 `Music` 文件夹，用于尚未被扫描器索引的文件
 - **搜索**：按歌名、歌手或专辑即时过滤列表；清空按钮可一键还原
-- **列表分组**：可切换「不分组 / 按专辑 / 按文件夹」，组标题显示组内歌曲数；
-  搜索在分组视图下同样生效，分组只改变呈现顺序，不改变播放顺序
-- **专辑封面**：主界面当前位置显示封面，通知栏也显示
+- **两个标签页**：`列表` 按媒体库原始顺序平铺，`专辑` 按专辑分组（组标题显示组内歌曲数）。
+  两个标签共用同一份搜索过滤结果，只改变呈现顺序，不改变播放顺序
+- **独立播放页**：点底部控制栏进入。大封面、标题／艺术家／专辑、进度条与播放控制都在这里；
+  主界面只保留一条窄控制栏，把空间让给列表
+- **专辑封面**：主界面控制栏与播放页显示封面，通知栏也显示
 - 列表显示歌曲名、艺术家、时长，当前播放项高亮
-- 播放 / 暂停、上一首 / 下一首
 - **后台播放**：播放由前台 Service 承担，退出界面或切到别的应用不会被中断；
-  通知栏常驻显示当前曲目与封面，点击可回到播放界面
-- 拖动进度条跳转，实时显示 `当前时间 / 总时长`
+  通知栏常驻显示当前曲目与封面，点击可回到界面
 - 音频焦点处理：来电等打断时自动暂停；被短暂压低音量（duck）时自动降低音量
 - 支持格式：mp3、m4a、aac、wav、ogg、flac、mid、amr、3gp、mp4
 
@@ -29,16 +29,18 @@
 app/
   AndroidManifest.xml                    清单：minSdkVersion=8, targetSdkVersion=8
   src/com/example/musicplayer/
-    MusicPlayerActivity.java             界面：搜索过滤、列表、封面、进度条、与服务绑定
+    MusicPlayerActivity.java             主界面：标签页、搜索过滤、窄控制栏、与服务绑定
+    PlayerActivity.java                  播放页：大封面、进度条、播放控制
     TrackPlayer.java                     前台 Service：播放引擎、音频焦点、通知栏
     MediaLibrary.java                    MediaStore 查询与目录遍历
     Artwork.java                         封面获取（MediaStore 专辑封面 + 解码缓存）
     Id3.java                             ID3v2 APIC 解析（纯 Java，无 Android 依赖）
     Track.java                           单首歌曲的数据模型（Parcelable，含 albumId）
   res/
-    layout/main.xml                      主界面布局
+    layout/main.xml                      主界面：标签页 + 窄控制栏
+    layout/player.xml                    播放页布局
     layout/row.xml                       列表行布局
-    layout/group_header.xml              分组视图的组标题行
+    layout/group_header.xml              专辑标签的组标题行
     layout/notification.xml              通知栏自定义布局（API 8 无大图区域，只能用 RemoteViews）
     drawable/search_box.xml              搜索框背景（深色输入框，见下）
     drawable/art_background.xml          封面圆角底
@@ -47,6 +49,10 @@ app/
     drawable-{l,m,h,xh}dpi/ic_launcher.png   启动图标（由 tools/make_icons.py 生成）
     drawable-{l,m,h,xh}dpi/ic_stat_music.png 通知栏图标（由 tools/make_stat_icon.py 生成）
 ```
+
+标签页用 `TabHost` + `TabSpec.setContent(int)`：两个 `ListView` 直接写在主布局里，
+按 id 交给标签，**不嵌套 Activity**，因此没有 `LocalActivityManager` 的生命周期麻烦。
+`TabHost` 在 API level 1 就有，无需兼容处理。
 
 配色不是凭感觉调的：`tools/check_contrast.py` 按 WCAG 标准计算各元素文字与背景的
 对比度。搜索框必须自带深色背景 —— 平台默认的 `EditText` 背景是浅色，配白字会
@@ -99,7 +105,7 @@ APK）→ `apksigner`（仅 v1 签名）→ `zipalign`。
 - **只签 v1 方案**：APK Signature Scheme v2 是 Android 7.0 才引入的，
   Android 2.2 只能识别 v1（JAR）签名，所以构建时显式关闭 v2。
 - **不用 AndroidX / 支持库**：只依赖 `android.jar`（API 8），避免引入需要更高
-  API 的依赖，APK 体积仅 48 KB。
+  API 的依赖，APK 体积仅 52 KB。
 - **图标为 PNG**：XML 矢量/自适应图标需要更高 API，这里为四种密度各生成一张 PNG。
 - **绕开 `dx.bat` / `apksigner.bat`**：这两个批处理通过 `find_java.bat` 定位
   Java，而 build-tools 25 已不再提供该文件，导致它们不报错也不干活（静默退出 0）。
