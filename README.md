@@ -33,11 +33,16 @@ app/
   res/
     layout/main.xml                      主界面布局
     layout/row.xml                       列表行布局
+    drawable/search_box.xml              搜索框背景（深色输入框，见下）
     values/strings.xml                   文案（UTF-8 中文，编译进 resources.arsc）
     values/colors.xml                    配色
     drawable-{l,m,h,xh}dpi/ic_launcher.png   启动图标（由 tools/make_icons.py 生成）
     drawable-{l,m,h,xh}dpi/ic_stat_music.png 通知栏图标（由 tools/make_stat_icon.py 生成）
 ```
+
+配色不是凭感觉调的：`tools/check_contrast.py` 按 WCAG 标准计算各元素文字与背景的
+对比度。搜索框必须自带深色背景 —— 平台默认的 `EditText` 背景是浅色，配白字会
+变成白底白字（这个 bug 真的发生过）。当前最差的一对是搜索提示文字，5.46（AA）。
 
 ## 编译
 
