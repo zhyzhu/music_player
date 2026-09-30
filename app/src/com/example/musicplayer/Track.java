@@ -84,11 +84,6 @@ public class Track implements Parcelable {
         return trimmed;
     }
 
-    /** Label used in the now-playing bar. */
-    public String displayName() {
-        return title + " - " + artist;
-    }
-
     // -------------------------------------------------------------- Parcelable
 
     public int describeContents() {

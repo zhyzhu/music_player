@@ -503,8 +503,10 @@ public class MusicPlayerActivity extends Activity
     private void updateFilter() {
         String query = searchEdit.getText().toString().trim().toLowerCase();
 
-        // Flat tab: library order.
+        // Flat tab: library order. The rows must be rebuilt here as well - the
+        // adapter reads songRows, not songsResults.
         songsResults.clear();
+        songRows.clear();
         if (query.length() == 0) {
             songsResults.addAll(allTracks);
         } else {
@@ -514,6 +516,9 @@ public class MusicPlayerActivity extends Activity
                     songsResults.add(track);
                 }
             }
+        }
+        for (int i = 0; i < songsResults.size(); i++) {
+            songRows.add(Row.track(songsResults.get(i)));
         }
 
         // Album tab: the same matches, grouped.

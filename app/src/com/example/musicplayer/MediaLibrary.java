@@ -112,7 +112,8 @@ public final class MediaLibrary {
             }
         } catch (Exception e) {
             // A missing or broken media provider must not crash the player; the
-            // caller falls back to a folder scan.
+            // caller falls back to a folder scan, so an empty list is the right
+            // answer here.
             return new ArrayList<Track>();
         } finally {
             if (cursor != null) {
