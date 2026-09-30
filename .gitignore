@@ -1,0 +1,26 @@
+# ---------------------------------------------------------------- toolchain
+# Downloaded build toolchain (JDK 8 + Android SDK). ~630 MB - never commit.
+# Recreate with tools/fetch_toolchain.ps1
+tools/jdk/
+tools/sdk/
+tools/mingit/
+tools/downloads/
+
+# ------------------------------------------------------------------ secrets
+# Local signing key. Debug-only, but keep private keys out of git regardless;
+# regenerate with tools/build_apk.ps1 (keytool) if missing.
+tools/*.keystore
+tools/*.jks
+
+# -------------------------------------------------------------- build output
+build/
+*.apk.idsig
+
+# ------------------------------------------------------------------ editors
+.vscode/
+.idea/
+*.swp
+
+# ------------------------------------------------------------------ Windows
+Thumbs.db
+desktop.ini

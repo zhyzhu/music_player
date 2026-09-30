@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">音乐播放器</string>
+    <string name="scan">扫描</string>
+    <string name="scan_hint">输入音乐目录，例如 /sdcard/Music</string>
+    <string name="empty">没有找到音频文件，请把 mp3 放到 /sdcard/Music 后点击“扫描”。</string>
+    <string name="unknown_artist">未知艺术家</string>
+    <string name="unknown_album">未知专辑</string>
+    <string name="btn_play">播放</string>
+    <string name="btn_pause">暂停</string>
+    <string name="btn_prev">上一首</string>
+    <string name="btn_next">下一首</string>
+    <string name="time_zero">00:00 / 00:00</string>
+    <string name="no_song">未选择歌曲</string>
+    <string name="scanning">正在扫描…</string>
+    <string name="found">共找到 %1$d 首歌曲</string>
+    <string name="error_play">无法播放该文件</string>
+</resources>
