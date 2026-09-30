@@ -16,12 +16,14 @@ import android.os.IBinder;
 import android.os.Message;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.graphics.Bitmap;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -71,8 +73,10 @@ public class MusicPlayerActivity extends ListActivity
     private EditText searchEdit;
     private Button clearButton;
     private Button playButton;
+    private ImageView artView;
     private TextView listInfo;
     private TextView nowText;
+    private TextView nowArtist;
     private TextView timeText;
     private TextView emptyText;
     private SeekBar seekBar;
@@ -80,6 +84,8 @@ public class MusicPlayerActivity extends ListActivity
     private int scanGeneration;
     private boolean userSeeking;
     private boolean progressPosted;
+    /** Guards against a slow cover decode overwriting a newer one. */
+    private int artToken;
 
     private final Handler handler = new Handler() {
         public void handleMessage(Message msg) {
@@ -153,7 +159,9 @@ public class MusicPlayerActivity extends ListActivity
         Button prevButton = (Button) findViewById(R.id.btn_prev);
         Button nextButton = (Button) findViewById(R.id.btn_next);
         listInfo = (TextView) findViewById(R.id.list_info);
+        artView = (ImageView) findViewById(R.id.art);
         nowText = (TextView) findViewById(R.id.now);
+        nowArtist = (TextView) findViewById(R.id.now_artist);
         timeText = (TextView) findViewById(R.id.time);
         emptyText = (TextView) findViewById(R.id.empty);
         seekBar = (SeekBar) findViewById(R.id.seek);
@@ -278,8 +286,12 @@ public class MusicPlayerActivity extends ListActivity
         Track current = player != null ? player.getCurrentTrack() : null;
         if (current == null) {
             nowText.setText(R.string.no_song);
+            nowArtist.setText("");
+            showArtwork(null);
         } else {
-            nowText.setText(current.displayName());
+            nowText.setText(current.title);
+            nowArtist.setText(current.artist);
+            loadArtworkAsync(current);
         }
         adapter.notifyDataSetChanged();
         if (playing) {
@@ -290,6 +302,8 @@ public class MusicPlayerActivity extends ListActivity
     }
 
     private void updateProgress() {
+        // Guard: the service may have gone away between the message being posted
+        // and delivered.
         if (player == null || !player.isPrepared()) {
             return;
         }
@@ -304,6 +318,55 @@ public class MusicPlayerActivity extends ListActivity
         if (player.isPlaying()) {
             postProgress();
         }
+    }
+
+    // --------------------------------------------------------------- artwork
+
+    /** Paint the cover for a track, or the placeholder when there is none. */
+    private void showArtwork(Bitmap art) {
+        if (artView == null) {
+            return;
+        }
+        if (art != null) {
+            artView.setImageBitmap(art);
+            return;
+        }
+        int edge = artView.getWidth();
+        if (edge <= 0) {
+            // Not laid out yet; the scaled size is close enough for a placeholder.
+            edge = 64;
+        }
+        artView.setImageBitmap(Artwork.placeholder(edge, 0xFF1B2027, 0xFF8B97A6));
+    }
+
+    /**
+     * Decode the cover off the UI thread.
+     *
+     * Reading a tag out of a file can take long enough to drop frames, and the
+     * result is only applied when the track has not changed in the meantime.
+     */
+    private void loadArtworkAsync(final Track track) {
+        if (artView == null || Artwork.isCached(track)) {
+            showArtwork(Artwork.load(this, track, track.albumId));
+            return;
+        }
+        showArtwork(null); // placeholder while decoding
+        final int token = ++artToken;
+        Thread worker = new Thread(new Runnable() {
+            public void run() {
+                final Bitmap art = Artwork.load(MusicPlayerActivity.this, track, track.albumId);
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (token != artToken) {
+                            return; // A newer track superseded this request.
+                        }
+                        showArtwork(art);
+                    }
+                });
+            }
+        }, "cover-load");
+        worker.setPriority(Thread.MIN_PRIORITY);
+        worker.start();
     }
 
     // --------------------------------------------------------------- seek bar

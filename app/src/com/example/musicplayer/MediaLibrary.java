@@ -30,7 +30,8 @@ public final class MediaLibrary {
         MediaStore.Audio.Media.ALBUM,
         MediaStore.Audio.Media.DURATION,
         MediaStore.Audio.Media.DATA,
-        MediaStore.Audio.Media.IS_MUSIC
+        MediaStore.Audio.Media.IS_MUSIC,
+        MediaStore.Audio.Media.ALBUM_ID
     };
 
     private MediaLibrary() {
@@ -76,6 +77,7 @@ public final class MediaLibrary {
             int albumCol = cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM);
             int durationCol = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION);
             int dataCol = cursor.getColumnIndex(MediaStore.Audio.Media.DATA);
+            int albumIdCol = cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM_ID);
 
             while (cursor.moveToNext()) {
                 String path = dataCol >= 0 && !cursor.isNull(dataCol)
@@ -97,13 +99,16 @@ public final class MediaLibrary {
                 String album = albumCol >= 0 ? cursor.getString(albumCol) : null;
                 long duration = durationCol >= 0 && !cursor.isNull(durationCol)
                         ? cursor.getLong(durationCol) : 0L;
+                long albumId = albumIdCol >= 0 && !cursor.isNull(albumIdCol)
+                        ? cursor.getLong(albumIdCol) : -1L;
 
                 // Compilation albums list every performer in ARTIST; a summary
                 // beats a wall of names.
                 boolean variousArtists = artist != null && artist.indexOf(';') >= 0;
 
                 result.add(Track.fromMediaStore(title, artist, album, path, uri,
-                        duration, variousArtists, fbTitle, fbArtist, fbAlbum, various));
+                        duration, albumId, variousArtists, fbTitle, fbArtist, fbAlbum,
+                        various));
             }
         } catch (Exception e) {
             // A missing or broken media provider must not crash the player; the

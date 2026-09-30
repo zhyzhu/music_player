@@ -10,11 +10,15 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Binder;
+import android.os.Handler;
 import android.os.IBinder;
+import android.widget.RemoteViews;
 
 /**
  * Playback engine, owned by a foreground service so audio keeps running when the
@@ -39,6 +43,12 @@ public class TrackPlayer extends Service
 
     private static final int NOTIFICATION_ID = 1;
     private static final int REQ_CONTENT = 10;
+    /**
+     * Edge of the cover bitmap put into the notification. Small on purpose: the
+     * bitmap is copied over Binder into the system process, which caps the
+     * transaction size.
+     */
+    private static final int NOTIFICATION_ART_EDGE = 144;
 
     /** Implemented by the activity to mirror playback state into its UI. */
     public interface Listener {
@@ -57,6 +67,11 @@ public class TrackPlayer extends Service
     private boolean prepared;
     private boolean foreground;
     private int volumeBeforeDuck = -1;
+    /** Guards against a slow cover decode overwriting a newer notification. */
+    private int artToken;
+
+    /** Notifications are posted from the main thread. */
+    private final Handler handler = new Handler();
 
     public class LocalBinder extends Binder {
         public TrackPlayer getService() {
@@ -363,9 +378,16 @@ public class TrackPlayer extends Service
     // ----------------------------------------------------------- notification
 
     private void enterForeground(Track track, boolean playing) {
-        Notification n = buildNotification(track, playing);
+        Notification n = buildNotification(track, playing,
+                artFor(track, NOTIFICATION_ART_EDGE));
         startForeground(NOTIFICATION_ID, n);
         foreground = true;
+
+        // A cover that is not cached yet would block this call on file IO, so it
+        // is decoded in the background and the notification refreshed after.
+        if (track != null && !Artwork.isCached(track)) {
+            refreshArtworkAsync(track, playing);
+        }
     }
 
     private void leaveForeground() {
@@ -378,8 +400,45 @@ public class TrackPlayer extends Service
         }
     }
 
+    /** Decode the cover off the main thread, then repost the notification. */
+    private void refreshArtworkAsync(final Track track, final boolean playing) {
+        final int token = ++artToken;
+        Thread worker = new Thread(new Runnable() {
+            public void run() {
+                final Bitmap art = Artwork.load(TrackPlayer.this, track, track.albumId);
+                if (art == null) {
+                    return; // Keep the placeholder already displayed.
+                }
+                handler.post(new Runnable() {
+                    public void run() {
+                        if (token != artToken || !foreground) {
+                            return; // A newer track superseded this request.
+                        }
+                        if (notificationManager != null) {
+                            notificationManager.notify(NOTIFICATION_ID,
+                                    buildNotification(track, playing, art));
+                        }
+                    }
+                });
+            }
+        }, "notif-cover");
+        worker.setPriority(Thread.MIN_PRIORITY);
+        worker.start();
+    }
+
+    /** Cached cover if there is one; never blocks, so it may return null. */
+    private Bitmap artFor(Track track, int edge) {
+        if (track != null && Artwork.isCached(track)) {
+            Bitmap cached = Artwork.load(this, track, track.albumId);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        return Artwork.placeholder(edge, 0xFF1B2027, 0xFF8B97A6);
+    }
+
     @SuppressWarnings("deprecation")
-    private Notification buildNotification(Track track, boolean playing) {
+    private Notification buildNotification(Track track, boolean playing, Bitmap art) {
         String title = track != null ? track.title : getString(R.string.no_song);
         String text;
         if (track == null) {
@@ -391,6 +450,12 @@ public class TrackPlayer extends Service
             text = track.artist + "  -  " + getString(R.string.btn_play);
         }
 
+        Intent content = new Intent(this, MusicPlayerActivity.class);
+        content.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent contentIntent = PendingIntent.getActivity(this, REQ_CONTENT,
+                content, PendingIntent.FLAG_UPDATE_CURRENT);
+
         Notification n = new Notification();
         // A dedicated white-on-transparent glyph: the system tints notification
         // icons, so the launcher icon would render as a solid block.
@@ -399,16 +464,46 @@ public class TrackPlayer extends Service
         n.when = System.currentTimeMillis();
         n.flags |= Notification.FLAG_ONGOING_EVENT;
         n.flags |= Notification.FLAG_NO_CLEAR;
+        n.contentIntent = contentIntent;
 
-        Intent content = new Intent(this, MusicPlayerActivity.class);
-        content.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent contentIntent = PendingIntent.getActivity(this, REQ_CONTENT,
-                content, PendingIntent.FLAG_UPDATE_CURRENT);
-
-        // API 8 has no action buttons, so the whole notification is the tap
-        // target; playback control stays in the activity.
+        // The custom view carries the cover. setLatestEventInfo is still called
+        // so the notification stays valid on API levels that ignore contentView.
         n.setLatestEventInfo(this, title, text, contentIntent);
+        n.contentView = buildContentView(title, text, art);
         return n;
+    }
+
+    private RemoteViews buildContentView(String title, String text, Bitmap art) {
+        RemoteViews views = new RemoteViews(getPackageName(), R.layout.notification);
+        views.setTextViewText(R.id.notif_title, title);
+        views.setTextViewText(R.id.notif_text, text);
+        Bitmap scaled = scaleTo(art, NOTIFICATION_ART_EDGE);
+        if (scaled != null) {
+            views.setImageViewBitmap(R.id.notif_art, scaled);
+        }
+        return views;
+    }
+
+    /**
+     * Scale into a fresh mutable bitmap.
+     *
+     * Bitmap.createScaledBitmap cannot be used here: art decoded from a PNG is
+     * immutable, and the framework call rejects it.
+     */
+    private static Bitmap scaleTo(Bitmap source, int edge) {
+        if (source == null) {
+            return null;
+        }
+        try {
+            Bitmap out = Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(out);
+            canvas.drawBitmap(source, null,
+                    new android.graphics.Rect(0, 0, edge, edge), null);
+            return out;
+        } catch (Exception e) {
+            return null;
+        } catch (OutOfMemoryError e) {
+            return null;
+        }
     }
 }

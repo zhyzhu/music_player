@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Custom notification layout.
+
+  API level 8 notifications have no large-icon area, so showing the cover means
+  supplying the whole view and filling the image in as a bitmap through
+  RemoteViews. The system measures this at the status bar's own size, so the
+  bitmap passed in must be small (see TrackPlayer).
+
+  Text colours come from the theme rather than fixed values: the notification
+  background is drawn by the system and can be light, so a hardcoded near-white
+  would be invisible there.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="fill_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="4dp">
+
+    <ImageView
+        android:id="@+id/notif_art"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:scaleType="centerCrop"
+        android:background="@drawable/art_background" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_gravity="center_vertical"
+        android:orientation="vertical"
+        android:paddingLeft="8dp"
+        android:paddingRight="4dp">
+
+        <TextView
+            android:id="@+id/notif_title"
+            android:layout_width="fill_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:textColor="?android:textColorPrimary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/notif_text"
+            android:layout_width="fill_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:paddingTop="2dp"
+            android:textColor="?android:textColorSecondary"
+            android:textSize="12sp" />
+    </LinearLayout>
+</LinearLayout>
