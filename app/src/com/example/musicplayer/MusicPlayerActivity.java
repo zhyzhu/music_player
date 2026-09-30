@@ -102,7 +102,7 @@ public class MusicPlayerActivity extends Activity
 
     private EditText searchEdit;
     private Button clearButton;
-    private Button playButton;
+    private TextView playButton;
     private ImageView artView;
     private TextView listInfo;
     private TextView nowText;
@@ -110,9 +110,13 @@ public class MusicPlayerActivity extends Activity
     private TextView emptyText;
     private View nowBar;
     private View playHitArea;
-    private TabHost tabHost;
+    private TextView tabSongs;
+    private TextView tabAlbums;
     private ListView songsList;
     private ListView albumsList;
+
+    /** Which list is showing; drives both visibility and the tab highlight. */
+    private boolean showingAlbums;
 
     /** Flat view: matching songs in library order. */
     private final List<Track> songsResults = new ArrayList<Track>();
@@ -196,7 +200,7 @@ public class MusicPlayerActivity extends Activity
         nowText = (TextView) findViewById(R.id.now);
         nowArtist = (TextView) findViewById(R.id.now_artist);
         nowBar = findViewById(R.id.now_bar);
-        playButton = (Button) findViewById(R.id.btn_play);
+        playButton = (TextView) findViewById(R.id.btn_play);
 
         scanButton.setOnClickListener(this);
         clearButton.setOnClickListener(this);
@@ -210,12 +214,16 @@ public class MusicPlayerActivity extends Activity
         scan(false);
     }
 
+    /**
+     * Wire the segmented control.
+     *
+     * Both lists occupy the same slot and only one is visible, so the adapters
+     * stay attached and switching is just a visibility flip - no data is rebuilt
+     * and no scroll position is lost.
+     */
     private void setupTabs() {
-        tabHost = (TabHost) findViewById(android.R.id.tabhost);
-        tabHost.setup();
-
-        // The content views are children of the tab content frame, so they are
-        // handed to the tabs directly; no activity is nested inside a tab.
+        tabSongs = (TextView) findViewById(R.id.tab_songs);
+        tabAlbums = (TextView) findViewById(R.id.tab_albums);
         songsList = (ListView) findViewById(R.id.list_songs);
         albumsList = (ListView) findViewById(R.id.list_albums);
 
@@ -224,12 +232,8 @@ public class MusicPlayerActivity extends Activity
         songsList.setAdapter(songsAdapter);
         albumsList.setAdapter(albumsAdapter);
 
-        tabHost.addTab(tabHost.newTabSpec("songs")
-                .setIndicator(getString(R.string.tab_songs))
-                .setContent(R.id.list_songs));
-        tabHost.addTab(tabHost.newTabSpec("albums")
-                .setIndicator(getString(R.string.tab_albums))
-                .setContent(R.id.list_albums));
+        tabSongs.setOnClickListener(this);
+        tabAlbums.setOnClickListener(this);
 
         songsList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
@@ -241,6 +245,33 @@ public class MusicPlayerActivity extends Activity
                 onRowClick(albumRows, albumResults, position);
             }
         });
+
+        showTab(false);
+    }
+
+    /** Switch the visible list and move the highlight. */
+    private void showTab(boolean albums) {
+        showingAlbums = albums;
+        songsList.setVisibility(albums ? View.GONE : View.VISIBLE);
+        albumsList.setVisibility(albums ? View.VISIBLE : View.GONE);
+        tabSongs.setBackgroundDrawable(albums ? null
+                : getResources().getDrawable(R.color.tab_active));
+        tabAlbums.setBackgroundDrawable(albums
+                ? getResources().getDrawable(R.color.tab_active) : null);
+        tabSongs.setTextColor(getResources().getColor(
+                albums ? R.color.text_secondary : R.color.text_primary));
+        tabAlbums.setTextColor(getResources().getColor(
+                albums ? R.color.text_primary : R.color.text_secondary));
+        updateTabCounts();
+    }
+
+    /** Each tab shows the number of songs it holds. */
+    private void updateTabCounts() {
+        if (tabSongs == null || songsResults == null) {
+            return;
+        }
+        tabSongs.setText(getString(R.string.tab_songs) + " " + songsResults.size());
+        tabAlbums.setText(getString(R.string.tab_albums) + " " + albumResults.size());
     }
 
     /**
@@ -315,6 +346,10 @@ public class MusicPlayerActivity extends Activity
             scan(true);
         } else if (id == R.id.btn_clear) {
             searchEdit.setText("");
+        } else if (id == R.id.tab_songs) {
+            showTab(false);
+        } else if (id == R.id.tab_albums) {
+            showTab(true);
         }
     }
 
@@ -506,7 +541,8 @@ public class MusicPlayerActivity extends Activity
         boolean empty = songsResults.isEmpty();
         emptyText.setVisibility(empty ? View.VISIBLE : View.GONE);
         emptyText.setText(allTracks.size() > 0 ? R.string.no_match : R.string.empty);
-        tabHost.setVisibility(empty ? View.GONE : View.VISIBLE);
+        // Keep the tab labels in step with the filtered counts.
+        updateTabCounts();
     }
 
     private static boolean matches(Track track, String query) {

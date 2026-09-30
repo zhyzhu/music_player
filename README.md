@@ -50,9 +50,15 @@ app/
     drawable-{l,m,h,xh}dpi/ic_stat_music.png 通知栏图标（由 tools/make_stat_icon.py 生成）
 ```
 
-标签页用 `TabHost` + `TabSpec.setContent(int)`：两个 `ListView` 直接写在主布局里，
-按 id 交给标签，**不嵌套 Activity**，因此没有 `LocalActivityManager` 的生命周期麻烦。
-`TabHost` 在 API level 1 就有，无需兼容处理。
+标签栏是自己做的分段控件（两个 `TextView` + 一个 `FrameLayout`），不是 `TabHost`。
+原因有两个：`TabWidget` 用 `Button` 画指示器，其最小高度在 API 8 上压不下去，
+占了过多竖向空间；`TabSpec.setContent` 还会重设传入 View 的父容器，而两个
+`ListView` 本来就已放在 `FrameLayout` 里，不必引入这层不确定性。两个列表叠在同一
+槽位、只切换可见性，因此适配器与滚动位置都不会丢。
+
+底部控制栏整条是一个触摸目标：点播放按钮切换播放，点其它位置进入播放页。播放按钮
+用的是 `TextView` 而非 `Button` —— `Button` 会自行消费触摸事件，父容器上的
+`onTouchListener` 根本收不到，这个坑真机验证时踩到过。
 
 配色不是凭感觉调的：`tools/check_contrast.py` 按 WCAG 标准计算各元素文字与背景的
 对比度。搜索框必须自带深色背景 —— 平台默认的 `EditText` 背景是浅色，配白字会

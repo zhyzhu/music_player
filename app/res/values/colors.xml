@@ -8,4 +8,5 @@
     <color name="accent">#FF3DA9FC</color>
     <color name="divider">#FF2A313A</color>
     <color name="group_bar">#FF232B34</color>
+    <color name="tab_active">#FF2E3944</color>
 </resources>

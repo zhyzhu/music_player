@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Host layout: the tab strip, the two segment lists, and a compact now-playing
-  bar that opens the player page when tapped.
+  Main screen: a thin segmented control over two lists, and a compact
+  now-playing bar that opens the player page.
 
-  Both ListViews live here and are handed to the tabs with
-  TabSpec.setContent(View), so no activity is nested inside the tabs.
+  The tab strip is two TextViews rather than TabHost/TabWidget. TabWidget draws
+  its indicators with Buttons, which have a large minimum height that cannot be
+  reduced, and TabSpec.setContent re-parents the view it is given - avoidable
+  uncertainty for a two-way switch.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="fill_parent"
@@ -62,6 +64,39 @@
             android:textSize="13sp" />
     </LinearLayout>
 
+    <!-- Segmented control: two equal halves, the active one highlighted. -->
+    <LinearLayout
+        android:layout_width="fill_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/panel"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tab_songs"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@color/tab_active"
+            android:gravity="center"
+            android:paddingBottom="7dp"
+            android:paddingTop="7dp"
+            android:text="@string/tab_songs"
+            android:textColor="@color/text_primary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/tab_albums"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:paddingBottom="7dp"
+            android:paddingTop="7dp"
+            android:text="@string/tab_albums"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+    </LinearLayout>
+
     <TextView
         android:id="@+id/list_info"
         android:layout_width="fill_parent"
@@ -69,51 +104,35 @@
         android:paddingBottom="2dp"
         android:paddingLeft="8dp"
         android:paddingRight="8dp"
+        android:paddingTop="2dp"
         android:textColor="@color/text_secondary"
         android:textSize="11sp" />
 
-    <TabHost
-        android:id="@android:id/tabhost"
+    <!-- Both lists fill the same slot; only the selected one is visible. -->
+    <FrameLayout
+        android:id="@+id/content"
         android:layout_width="fill_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <LinearLayout
+        <ListView
+            android:id="@+id/list_songs"
             android:layout_width="fill_parent"
             android:layout_height="fill_parent"
-            android:orientation="vertical">
+            android:cacheColorHint="#00000000"
+            android:divider="@color/divider"
+            android:dividerHeight="1px"
+            android:fastScrollEnabled="true" />
 
-            <TabWidget
-                android:id="@android:id/tabs"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content" />
-
-            <FrameLayout
-                android:id="@android:id/tabcontent"
-                android:layout_width="fill_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1">
-
-                <ListView
-                    android:id="@+id/list_songs"
-                    android:layout_width="fill_parent"
-                    android:layout_height="fill_parent"
-                    android:cacheColorHint="#00000000"
-                    android:divider="@color/divider"
-                    android:dividerHeight="1px"
-                    android:fastScrollEnabled="true" />
-
-                <ListView
-                    android:id="@+id/list_albums"
-                    android:layout_width="fill_parent"
-                    android:layout_height="fill_parent"
-                    android:cacheColorHint="#00000000"
-                    android:divider="@color/divider"
-                    android:dividerHeight="1px"
-                    android:fastScrollEnabled="true" />
-            </FrameLayout>
-        </LinearLayout>
-    </TabHost>
+        <ListView
+            android:id="@+id/list_albums"
+            android:layout_width="fill_parent"
+            android:layout_height="fill_parent"
+            android:cacheColorHint="#00000000"
+            android:divider="@color/divider"
+            android:dividerHeight="1px"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/empty"
@@ -125,8 +144,9 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
-    <!-- Compact now-playing bar. Tapping it opens the player page; tapping the
-         play button toggles playback. -->
+    <!-- Compact now-playing bar. The whole strip is the tap target; the play
+         button is intentionally a non-focusable TextView so it cannot swallow
+         the touch event before the bar sees it. -->
     <LinearLayout
         android:id="@+id/now_bar"
         android:layout_width="fill_parent"
@@ -177,13 +197,18 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
-        <Button
+        <TextView
             android:id="@+id/btn_play"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginLeft="6dp"
-            android:minWidth="0dp"
+            android:minWidth="52dp"
+            android:gravity="center"
+            android:paddingBottom="8dp"
+            android:paddingTop="8dp"
             android:text="@string/btn_play_short"
-            android:textSize="12sp" />
+            android:textColor="@color/accent"
+            android:textSize="13sp"
+            android:textStyle="bold" />
     </LinearLayout>
 </LinearLayout>
