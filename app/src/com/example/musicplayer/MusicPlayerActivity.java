@@ -2,7 +2,9 @@ package com.example.musicplayer;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import android.app.ListActivity;
 import android.content.ComponentName;
@@ -53,17 +55,57 @@ public class MusicPlayerActivity extends ListActivity
     /** Folder scanned when nothing is indexed yet; no need to ask the user. */
     private static final String DEFAULT_FOLDER = "Music";
 
+    /** How the list is segmented. */
+    private static final int GROUP_NONE = 0;
+    private static final int GROUP_ALBUM = 1;
+    private static final int GROUP_FOLDER = 2;
+
+    private static final String PREFS = "player";
+    private static final String PREF_GROUP = "group";
+
     private static final int MSG_PROGRESS = 1;
     private static final int MSG_FILTER = 2;
     private static final long PROGRESS_INTERVAL_MS = 1000L;
     /** Keystrokes arrive faster than a filter needs to run. */
     private static final long FILTER_DELAY_MS = 250L;
 
-    /** Every track found by the last scan, in display order. */
+    /** Every track found by the last scan. */
     private final List<Track> allTracks = new ArrayList<Track>();
-    /** The subset currently shown, matching the search box. */
-    private final List<Track> visibleTracks = new ArrayList<Track>();
+    /** Songs matching the search, in playback order. */
+    private final List<Track> displayedTracks = new ArrayList<Track>();
+    /** What the ListView actually shows: group headers interleaved with songs. */
+    private final List<Row> rows = new ArrayList<Row>();
     private TrackAdapter adapter;
+
+    /** One entry of the segmented list. */
+    private static final class Row {
+        static final int TYPE_GROUP = 0;
+        static final int TYPE_TRACK = 1;
+
+        final int type;
+        final Track track;
+        final String label;
+        final int count;
+
+        private Row(int type, Track track, String label, int count) {
+            this.type = type;
+            this.track = track;
+            this.label = label;
+            this.count = count;
+        }
+
+        static Row group(String label, int count) {
+            return new Row(TYPE_GROUP, null, label, count);
+        }
+
+        static Row track(Track track) {
+            return new Row(TYPE_TRACK, track, null, 0);
+        }
+
+        boolean isGroup() {
+            return type == TYPE_GROUP;
+        }
+    }
 
     /** Bound playback service, or null until the connection completes. */
     private TrackPlayer player;
@@ -73,6 +115,7 @@ public class MusicPlayerActivity extends ListActivity
     private EditText searchEdit;
     private Button clearButton;
     private Button playButton;
+    private Button groupButton;
     private ImageView artView;
     private TextView listInfo;
     private TextView nowText;
@@ -84,6 +127,7 @@ public class MusicPlayerActivity extends ListActivity
     private int scanGeneration;
     private boolean userSeeking;
     private boolean progressPosted;
+    private int groupMode = GROUP_NONE;
     /** Guards against a slow cover decode overwriting a newer one. */
     private int artToken;
 
@@ -115,8 +159,8 @@ public class MusicPlayerActivity extends ListActivity
                 allTracks.clear();
                 allTracks.addAll(serviceQueue);
                 adapter.notifyDataSetChanged();
-            } else if (!visibleTracks.isEmpty()) {
-                player.setQueue(new ArrayList<Track>(visibleTracks));
+            } else if (!displayedTracks.isEmpty()) {
+                player.setQueue(new ArrayList<Track>(displayedTracks));
             }
             updateFilter();
             onPlayerStateChanged();
@@ -155,6 +199,7 @@ public class MusicPlayerActivity extends ListActivity
         searchEdit = (EditText) findViewById(R.id.search);
         clearButton = (Button) findViewById(R.id.btn_clear);
         Button scanButton = (Button) findViewById(R.id.btn_scan);
+        groupButton = (Button) findViewById(R.id.btn_group);
         playButton = (Button) findViewById(R.id.btn_play);
         Button prevButton = (Button) findViewById(R.id.btn_prev);
         Button nextButton = (Button) findViewById(R.id.btn_next);
@@ -168,6 +213,7 @@ public class MusicPlayerActivity extends ListActivity
 
         scanButton.setOnClickListener(this);
         clearButton.setOnClickListener(this);
+        groupButton.setOnClickListener(this);
         playButton.setOnClickListener(this);
         prevButton.setOnClickListener(this);
         nextButton.setOnClickListener(this);
@@ -176,6 +222,10 @@ public class MusicPlayerActivity extends ListActivity
 
         adapter = new TrackAdapter(this);
         setListAdapter(adapter);
+
+        // Remember how the user prefers the list segmented.
+        groupMode = getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_GROUP, GROUP_NONE);
+        updateGroupButton();
 
         // Automatic scan on start: results are shown, but the service keeps
         // whatever it is already playing, so returning here cannot interrupt it.
@@ -216,6 +266,13 @@ public class MusicPlayerActivity extends ListActivity
             scan(true);
         } else if (id == R.id.btn_clear) {
             searchEdit.setText("");
+        } else if (id == R.id.btn_group) {
+            // Cycle flat -> by album -> by folder.
+            groupMode = (groupMode + 1) % 3;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putInt(PREF_GROUP, groupMode).commit();
+            updateGroupButton();
+            updateFilter();
         } else if (id == R.id.btn_play) {
             if (player != null) {
                 player.toggle();
@@ -239,15 +296,25 @@ public class MusicPlayerActivity extends ListActivity
 
     @Override
     protected void onListItemClick(ListView l, View v, int position, long itemId) {
-        if (player == null || position < 0 || position >= visibleTracks.size()) {
+        if (player == null || position < 0 || position >= rows.size()) {
             return;
         }
-        int serviceIndex = indexInServiceQueue(visibleTracks.get(position));
+        Row row = rows.get(position);
+        if (row.isGroup()) {
+            return; // Group headers are labels, not playable entries.
+        }
+        Track clicked = row.track;
+        int trackIndex = displayedTracks.indexOf(clicked);
+        if (trackIndex < 0) {
+            return;
+        }
+
+        int serviceIndex = indexInServiceQueue(clicked);
         if (serviceIndex >= 0 && serviceIndex == player.getIndex() && player.isPrepared()) {
             player.toggle();
         } else {
-            // Play the visible list, so next/previous follow what the user sees.
-            player.play(new ArrayList<Track>(visibleTracks), position);
+            // Play the displayed list, so next/previous follow what the user sees.
+            player.play(new ArrayList<Track>(displayedTracks), trackIndex);
             playbackStarted = true;
         }
         startPlaybackForeground();
@@ -485,42 +552,128 @@ public class MusicPlayerActivity extends ListActivity
     /** Rebuild the visible list from the current query, then resync the service. */
     private void updateFilter() {
         String query = searchEdit.getText().toString().trim().toLowerCase();
+        String unknownAlbum = getString(R.string.group_unknown_album);
+        String unknownFolder = getString(R.string.group_unknown_folder);
 
-        visibleTracks.clear();
+        displayedTracks.clear();
         if (query.length() == 0) {
-            visibleTracks.addAll(allTracks);
+            displayedTracks.addAll(allTracks);
         } else {
             for (int i = 0; i < allTracks.size(); i++) {
                 Track track = allTracks.get(i);
+                // Album is searchable too, since the list can be segmented by it.
                 if (track.title.toLowerCase().indexOf(query) >= 0
-                        || track.artist.toLowerCase().indexOf(query) >= 0) {
-                    visibleTracks.add(track);
+                        || track.artist.toLowerCase().indexOf(query) >= 0
+                        || track.album.toLowerCase().indexOf(query) >= 0) {
+                    displayedTracks.add(track);
                 }
             }
         }
+        buildRows(unknownAlbum, unknownFolder);
         adapter.notifyDataSetChanged();
 
         boolean playing = player != null && player.isPrepared();
         if (playing) {
             // The queue is fixed once playing, so searching only changes the
             // list and never interrupts the current track.
-            listInfo.setText(getString(R.string.found_playing, visibleTracks.size()));
+            listInfo.setText(getString(R.string.found_playing, displayedTracks.size()));
         } else {
             syncQueueWithVisible();
-            if (visibleTracks.isEmpty() && allTracks.size() > 0) {
+            if (displayedTracks.isEmpty() && allTracks.size() > 0) {
                 listInfo.setText(R.string.no_match);
             } else {
-                listInfo.setText(getString(R.string.found, visibleTracks.size()));
+                listInfo.setText(getString(R.string.found, displayedTracks.size()));
             }
         }
 
-        boolean empty = visibleTracks.isEmpty();
+        boolean empty = displayedTracks.isEmpty();
         emptyText.setVisibility(empty ? View.VISIBLE : View.GONE);
         getListView().setVisibility(empty ? View.GONE : View.VISIBLE);
         if (empty && allTracks.size() > 0) {
             emptyText.setText(R.string.no_match);
         } else if (empty) {
             emptyText.setText(R.string.empty);
+        }
+    }
+
+    /**
+     * Fill {@link #rows} from {@link #displayedTracks}.
+     *
+     * Grouping only changes how the list is presented: displayedTracks stays flat
+     * and in playback order, so the queue handed to the service is unaffected.
+     */
+    private void buildRows(String unknownAlbum, String unknownFolder) {
+        rows.clear();
+        if (groupMode == GROUP_NONE) {
+            for (int i = 0; i < displayedTracks.size(); i++) {
+                rows.add(Row.track(displayedTracks.get(i)));
+            }
+            return;
+        }
+
+        // Insertion order preserved, so groups appear in the order of the list.
+        LinkedHashMap<String, List<Track>> groups =
+                new LinkedHashMap<String, List<Track>>();
+        for (int i = 0; i < displayedTracks.size(); i++) {
+            Track track = displayedTracks.get(i);
+            String key;
+            if (groupMode == GROUP_ALBUM) {
+                key = track.album != null && track.album.length() > 0
+                        ? track.album : unknownAlbum;
+            } else {
+                key = folderOf(track.path, unknownFolder);
+            }
+            List<Track> bucket = groups.get(key);
+            if (bucket == null) {
+                bucket = new ArrayList<Track>();
+                groups.put(key, bucket);
+            }
+            bucket.add(track);
+        }
+
+        // Rebuild displayedTracks in grouped order as well, so a click maps to the
+        // right playback position with a plain indexOf.
+        displayedTracks.clear();
+        for (Map.Entry<String, List<Track>> entry : groups.entrySet()) {
+            List<Track> bucket = entry.getValue();
+            rows.add(Row.group(entry.getKey(), bucket.size()));
+            for (int i = 0; i < bucket.size(); i++) {
+                Track track = bucket.get(i);
+                rows.add(Row.track(track));
+                displayedTracks.add(track);
+            }
+        }
+    }
+
+    /**
+     * Group label for a track in folder mode: the name of the folder it sits in.
+     *
+     * Two folders with the same name but different parents share a group. That is
+     * the readable choice for a label; the paths are no help to the user when the
+     * whole library already lives under a common root.
+     */
+    private static String folderOf(String path, String fallback) {
+        if (path == null || path.length() == 0) {
+            return fallback;
+        }
+        File parent = new File(path).getParentFile();
+        if (parent == null) {
+            return fallback;
+        }
+        String name = parent.getName();
+        return name.length() > 0 ? name : parent.getAbsolutePath();
+    }
+
+    private void updateGroupButton() {
+        if (groupButton == null) {
+            return;
+        }
+        if (groupMode == GROUP_NONE) {
+            groupButton.setText(R.string.group_by_album);
+        } else if (groupMode == GROUP_ALBUM) {
+            groupButton.setText(R.string.group_by_folder);
+        } else {
+            groupButton.setText(R.string.group_flat);
         }
     }
 
@@ -534,10 +687,10 @@ public class MusicPlayerActivity extends ListActivity
             return;
         }
         List<Track> queue = player.getQueueSnapshot();
-        if (queue.size() == visibleTracks.size()) {
+        if (queue.size() == displayedTracks.size()) {
             boolean same = true;
             for (int i = 0; i < queue.size() && same; i++) {
-                if (queue.get(i) != visibleTracks.get(i)) {
+                if (queue.get(i) != displayedTracks.get(i)) {
                     same = false;
                 }
             }
@@ -545,7 +698,7 @@ public class MusicPlayerActivity extends ListActivity
                 return;
             }
         }
-        player.setQueue(new ArrayList<Track>(visibleTracks));
+        player.setQueue(new ArrayList<Track>(displayedTracks));
     }
 
     /** Extensions treated as audio; also used by MediaLibrary's folder scan. */
@@ -571,24 +724,66 @@ public class MusicPlayerActivity extends ListActivity
         }
 
         public int getCount() {
-            return visibleTracks.size();
+            return rows.size();
         }
 
         public Object getItem(int position) {
-            return visibleTracks.get(position);
+            return rows.get(position);
         }
 
         public long getItemId(int position) {
             return position;
         }
 
+        // Two view types: group headers, which must not be inflated as track rows.
+
+        @Override
+        public int getViewTypeCount() {
+            return 2;
+        }
+
+        @Override
+        public int getItemViewType(int position) {
+            return rows.get(position).type;
+        }
+
+        @Override
+        public boolean areAllItemsEnabled() {
+            return false;
+        }
+
+        @Override
+        public boolean isEnabled(int position) {
+            // A group header is a label; ListView must not treat it as clickable.
+            return !rows.get(position).isGroup();
+        }
+
         public View getView(int position, View convertView, ViewGroup parent) {
+            Row row = rows.get(position);
+            if (row.isGroup()) {
+                return getGroupView(position, convertView, parent);
+            }
+            return getTrackView(row.track, convertView, parent);
+        }
+
+        private View getGroupView(int position, View convertView, ViewGroup parent) {
             View view = convertView;
-            if (view == null) {
+            if (view == null || view.findViewById(R.id.group_name) == null) {
+                view = inflater.inflate(R.layout.group_header, parent, false);
+            }
+            Row row = rows.get(position);
+            TextView name = (TextView) view.findViewById(R.id.group_name);
+            TextView count = (TextView) view.findViewById(R.id.group_count);
+            name.setText(row.label);
+            count.setText(getString(R.string.group_count, row.count));
+            return view;
+        }
+
+        private View getTrackView(Track track, View convertView, ViewGroup parent) {
+            View view = convertView;
+            if (view == null || view.findViewById(R.id.row_title) == null) {
                 view = inflater.inflate(R.layout.row, parent, false);
             }
-            Track track = visibleTracks.get(position);
-
             TextView title = (TextView) view.findViewById(R.id.row_title);
             TextView artist = (TextView) view.findViewById(R.id.row_artist);
             TextView time = (TextView) view.findViewById(R.id.row_time);

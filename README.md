@@ -8,7 +8,9 @@
 - **自动发现歌曲**，不需要用户输入任何路径：
   - 优先通过 `MediaStore` 读取系统媒体库，显示真实 ID3 标签（标题／艺术家／专辑）与时长
   - 媒体库为空时自动回退为遍历 SD 卡的 `Music` 文件夹，用于尚未被扫描器索引的文件
-- **搜索**：按歌名或歌手即时过滤列表；清空按钮可一键还原
+- **搜索**：按歌名、歌手或专辑即时过滤列表；清空按钮可一键还原
+- **列表分组**：可切换「不分组 / 按专辑 / 按文件夹」，组标题显示组内歌曲数；
+  搜索在分组视图下同样生效，分组只改变呈现顺序，不改变播放顺序
 - **专辑封面**：主界面当前位置显示封面，通知栏也显示
 - 列表显示歌曲名、艺术家、时长，当前播放项高亮
 - 播放 / 暂停、上一首 / 下一首
@@ -36,6 +38,7 @@ app/
   res/
     layout/main.xml                      主界面布局
     layout/row.xml                       列表行布局
+    layout/group_header.xml              分组视图的组标题行
     layout/notification.xml              通知栏自定义布局（API 8 无大图区域，只能用 RemoteViews）
     drawable/search_box.xml              搜索框背景（深色输入框，见下）
     drawable/art_background.xml          封面圆角底
@@ -96,7 +99,7 @@ APK）→ `apksigner`（仅 v1 签名）→ `zipalign`。
 - **只签 v1 方案**：APK Signature Scheme v2 是 Android 7.0 才引入的，
   Android 2.2 只能识别 v1（JAR）签名，所以构建时显式关闭 v2。
 - **不用 AndroidX / 支持库**：只依赖 `android.jar`（API 8），避免引入需要更高
-  API 的依赖，APK 体积仅 45 KB。
+  API 的依赖，APK 体积仅 48 KB。
 - **图标为 PNG**：XML 矢量/自适应图标需要更高 API，这里为四种密度各生成一张 PNG。
 - **绕开 `dx.bat` / `apksigner.bat`**：这两个批处理通过 `find_java.bat` 定位
   Java，而 build-tools 25 已不再提供该文件，导致它们不报错也不干活（静默退出 0）。

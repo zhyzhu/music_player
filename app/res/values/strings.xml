@@ -3,7 +3,13 @@
     <string name="app_name">音乐播放器</string>
     <string name="scan">扫描</string>
     <string name="clear">清空</string>
-    <string name="search_hint">搜索歌曲或歌手</string>
+    <string name="search_hint">搜索歌曲、歌手或专辑</string>
+    <string name="group_flat">不分组</string>
+    <string name="group_by_album">按专辑</string>
+    <string name="group_by_folder">按文件夹</string>
+    <string name="group_unknown_album">未知专辑</string>
+    <string name="group_unknown_folder">未知位置</string>
+    <string name="group_count">%1$d 首</string>
     <string name="empty">没有找到音频文件。请把 mp3 放到 SD 卡的 Music 文件夹后点击“扫描”。</string>
     <string name="no_match">没有匹配的歌曲</string>
     <string name="unknown_artist">未知艺术家</string>
