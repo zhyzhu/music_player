@@ -5,14 +5,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 import android.app.ListActivity;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.SharedPreferences;
-import android.media.AudioManager;
-import android.media.MediaPlayer;
-import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Message;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -26,28 +27,23 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 /**
- * Basic music player for Android 2.2 (API level 8).
+ * Music player UI for Android 2.2 (API level 8).
  *
- * Features: scan a folder for audio files, show them in a list, and play them
- * with play/pause, previous/next, a seek bar and a progress readout.
+ * The activity owns the library, the list and the progress display; actual
+ * playback lives in {@link TrackPlayer}, a foreground service, so music keeps
+ * playing when this activity is not in the foreground.
  *
- * Deliberately written in Java 6 syntax and limited to API 8 APIs so it can be
- * compiled with -source/-target 1.6 and run on Froyo.
+ * Deliberately written in Java 6 syntax and limited to API 8 APIs.
  */
 public class MusicPlayerActivity extends ListActivity
         implements View.OnClickListener,
-                   MediaPlayer.OnCompletionListener,
-                   MediaPlayer.OnErrorListener,
                    SeekBar.OnSeekBarChangeListener,
-                   AudioManager.OnAudioFocusChangeListener {
+                   TrackPlayer.Listener {
 
     /** File extensions treated as audio during a folder scan. */
     public static final String[] AUDIO_EXT = {
         ".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac", ".mid", ".midi", ".amr", ".3gp", ".mp4"
     };
-
-    private static final int MSG_PROGRESS = 1;
-    private static final long PROGRESS_INTERVAL_MS = 1000L;
 
     /** Scan the whole MediaStore index, or just one folder. */
     private static final int MODE_LIBRARY = 0;
@@ -57,11 +53,14 @@ public class MusicPlayerActivity extends ListActivity
     private static final String PREF_MODE = "mode";
     private static final String PREF_DIR = "dir";
 
-    private MediaPlayer player;
-    private AudioManager audioManager;
+    private static final int MSG_PROGRESS = 1;
+    private static final long PROGRESS_INTERVAL_MS = 1000L;
 
     private final List<Track> tracks = new ArrayList<Track>();
     private TrackAdapter adapter;
+
+    /** Bound playback service, or null until the connection completes. */
+    private TrackPlayer player;
 
     private EditText pathEdit;
     private Button scanButton;
@@ -73,14 +72,9 @@ public class MusicPlayerActivity extends ListActivity
     private TextView emptyText;
     private SeekBar seekBar;
 
-    private int currentIndex = -1;
-    private boolean prepared;
-    private boolean userSeeking;
     private int scanMode = MODE_LIBRARY;
-    /** Set when audio focus was lost, so playback can resume afterwards. */
-    private boolean resumeOnFocusGain;
-    private int volumeBeforeDuck = -1;
     private int scanGeneration;
+    private boolean userSeeking;
     private boolean progressPosted;
 
     private final Handler handler = new Handler() {
@@ -89,18 +83,35 @@ public class MusicPlayerActivity extends ListActivity
                 return;
             }
             progressPosted = false;
-            if (player != null && prepared && !userSeeking) {
-                int position = player.getCurrentPosition();
-                int duration = player.getDuration();
-                if (duration > 0) {
-                    seekBar.setMax(duration);
-                    seekBar.setProgress(position);
-                }
-                timeText.setText(formatTime(position) + " / " + formatTime(duration));
+            if (player == null || !player.isPrepared()) {
+                return;
             }
-            if (player != null && prepared && player.isPlaying()) {
+            int duration = player.getDuration();
+            if (duration > 0 && seekBar.getMax() != duration) {
+                seekBar.setMax(duration);
+            }
+            if (!userSeeking && duration > 0) {
+                seekBar.setProgress(player.getPosition());
+            }
+            timeText.setText(formatTime(player.getPosition()) + " / "
+                    + formatTime(duration));
+            if (player.isPlaying()) {
                 postProgress();
             }
+        }
+    };
+
+    private final ServiceConnection connection = new ServiceConnection() {
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            player = ((TrackPlayer.LocalBinder) service).getService();
+            player.setListener(MusicPlayerActivity.this);
+            player.setQueue(tracks);
+            onPlayerStateChanged();
+        }
+
+        public void onServiceDisconnected(ComponentName name) {
+            player = null;
+            onPlayerStateChanged();
         }
     };
 
@@ -110,8 +121,6 @@ public class MusicPlayerActivity extends ListActivity
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
-
-        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
 
         pathEdit = (EditText) findViewById(R.id.path);
         scanButton = (Button) findViewById(R.id.btn_scan);
@@ -137,30 +146,41 @@ public class MusicPlayerActivity extends ListActivity
 
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         scanMode = prefs.getInt(PREF_MODE, MODE_LIBRARY);
-
         File defaultDir = new File(Environment.getExternalStorageDirectory(), "Music");
         pathEdit.setText(prefs.getString(PREF_DIR, defaultDir.getAbsolutePath()));
 
+        // The service is created by the bind in onStart and only outlives this
+        // activity once playback actually starts (see startPlaybackForeground),
+        // so leaving without playing leaves nothing running.
         updateModeUi();
         scanDirectory();
     }
 
     @Override
-    protected void onDestroy() {
-        stopProgress();
-        releasePlayer();
-        super.onDestroy();
+    protected void onStart() {
+        super.onStart();
+        // Bind here (not in onCreate) so the bind/unbind calls stay balanced with
+        // onStop, and so playback driven from the notification is picked up again
+        // when this activity returns.
+        bindService(new Intent(this, TrackPlayer.class), connection, Context.BIND_AUTO_CREATE);
+        onPlayerStateChanged();
     }
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        // Basic behaviour: do not keep playing once the UI is in the background.
-        if (player != null && player.isPlaying()) {
-            player.pause();
-            updatePlayButton();
-            stopProgress();
+    protected void onStop() {
+        super.onStop();
+        stopProgress();
+        try {
+            unbindService(connection);
+        } catch (IllegalArgumentException ignored) {
+            // Not bound (for example when onCreate's bind already failed).
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        stopProgress();
+        super.onDestroy();
     }
 
     // ------------------------------------------------------------------ input
@@ -176,204 +196,63 @@ public class MusicPlayerActivity extends ListActivity
             updateModeUi();
             scanDirectory();
         } else if (id == R.id.btn_play) {
-            togglePlayPause();
+            if (player != null) {
+                player.toggle();
+                startPlaybackForeground();
+                postProgress();
+            }
         } else if (id == R.id.btn_prev) {
-            step(-1);
+            if (player != null) {
+                player.previous();
+                startPlaybackForeground();
+            }
         } else if (id == R.id.btn_next) {
-            step(1);
+            if (player != null) {
+                player.next();
+                startPlaybackForeground();
+            }
         }
     }
 
     @Override
     protected void onListItemClick(ListView l, View v, int position, long itemId) {
-        if (position < 0 || position >= tracks.size()) {
+        if (player == null || position < 0 || position >= tracks.size()) {
             return;
         }
-        if (position == currentIndex) {
-            togglePlayPause();
-            return;
-        }
-        currentIndex = position;
-        startCurrent(false);
-    }
-
-    // ---------------------------------------------------------------- playback
-
-    private void togglePlayPause() {
-        if (player == null || !prepared || currentIndex < 0) {
-            // Nothing loaded yet: start from the top of the list.
-            if (tracks.isEmpty()) {
-                toast(getString(R.string.no_song));
-                return;
-            }
-            if (currentIndex < 0) {
-                currentIndex = 0;
-            }
-            startCurrent(false);
-            return;
-        }
-        if (player.isPlaying()) {
-            player.pause();
+        if (position == player.getIndex() && player.isPrepared()) {
+            player.toggle();
         } else {
-            player.start();
-            postProgress();
+            player.play(tracks, position);
         }
-        updatePlayButton();
-    }
-
-    private void step(int delta) {
-        if (tracks.isEmpty()) {
-            toast(getString(R.string.no_song));
-            return;
-        }
-        int count = tracks.size();
-        int next = currentIndex < 0 ? 0 : (currentIndex + delta + count) % count;
-        currentIndex = next;
-        startCurrent(false);
-    }
-
-    private void startCurrent(boolean autoPlay) {
-        if (currentIndex < 0 || currentIndex >= tracks.size()) {
-            return;
-        }
-        Track track = tracks.get(currentIndex);
-
-        releasePlayer();
-        resetProgressUi();
-        nowText.setText(track.displayName());
-
-        player = new MediaPlayer();
-        player.setOnCompletionListener(this);
-        player.setOnErrorListener(this);
-        try {
-            player.setAudioStreamType(AudioManager.STREAM_MUSIC);
-            // MediaStore entries play through their content:// URI; folder scans
-            // use the file path.
-            if (track.uri != null) {
-                player.setDataSource(this, Uri.parse(track.uri));
-            } else {
-                player.setDataSource(new File(track.path).getAbsolutePath());
-            }
-            player.prepare();
-            prepared = true;
-        } catch (Exception e) {
-            releasePlayer();
-            toast(getString(R.string.error_play));
-            return;
-        }
-
-        requestFocus();
-
-        int duration = player.getDuration();
-        if (duration > 0) {
-            seekBar.setMax(duration);
-            timeText.setText(formatTime(0) + " / " + formatTime(duration));
-        }
-
-        player.start();
+        startPlaybackForeground();
         postProgress();
-        updatePlayButton();
     }
 
-    private void releasePlayer() {
-        if (player != null) {
-            try {
-                player.reset();
-            } catch (Exception ignored) {
-                // Nothing useful to do; the instance is being discarded.
-            }
-            player.release();
-            player = null;
-        }
-        prepared = false;
-        abandonFocus();
-        updatePlayButton();
+    /**
+     * Promote the service from "bound" to "started" so playback continues after
+     * this activity goes away.
+     */
+    private void startPlaybackForeground() {
+        startService(new Intent(this, TrackPlayer.class));
     }
 
-    private void updatePlayButton() {
-        if (playButton == null) {
-            return;
-        }
-        boolean playing = player != null && prepared && player.isPlaying();
+    // ----------------------------------------------------------------- state
+
+    public void onPlayerStateChanged() {
+        boolean playing = player != null && player.isPlaying();
         playButton.setText(playing ? R.string.btn_pause : R.string.btn_play);
-    }
 
-    public void onCompletion(MediaPlayer mp) {
-        stopProgress();
-        // Advance to the next track, wrapping around at the end.
-        if (tracks.size() > 1 && currentIndex >= 0) {
-            currentIndex = (currentIndex + 1) % tracks.size();
-            startCurrent(true);
+        Track current = player != null ? player.getCurrentTrack() : null;
+        if (current == null) {
+            nowText.setText(R.string.no_song);
         } else {
-            updatePlayButton();
+            nowText.setText(current.displayName());
         }
-    }
-
-    public boolean onError(MediaPlayer mp, int what, int extra) {
-        stopProgress();
-        toast(getString(R.string.error_play));
-        releasePlayer();
-        return true;
-    }
-
-    // ------------------------------------------------------------ audio focus
-
-    private void requestFocus() {
-        if (audioManager == null) {
-            return;
-        }
-        try {
-            audioManager.requestAudioFocus(this, AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN);
-        } catch (Exception ignored) {
-            // Focus is best-effort on old devices.
-        }
-    }
-
-    private void abandonFocus() {
-        if (audioManager == null) {
-            return;
-        }
-        try {
-            audioManager.abandonAudioFocus(this);
-        } catch (Exception ignored) {
-            // Ignore.
-        }
-    }
-
-    public void onAudioFocusChange(int focusChange) {
-        if (player == null || !prepared) {
-            return;
-        }
-        if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
-            resumeOnFocusGain = false;
-            if (player.isPlaying()) {
-                player.pause();
-            }
-            updatePlayButton();
-        } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-            resumeOnFocusGain = player.isPlaying();
-            if (resumeOnFocusGain) {
-                player.pause();
-            }
-            updatePlayButton();
-        } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
-            if (audioManager != null && volumeBeforeDuck < 0) {
-                volumeBeforeDuck = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-                int ducked = volumeBeforeDuck / 3;
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, ducked, 0);
-            }
-        } else if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
-            if (volumeBeforeDuck >= 0 && audioManager != null) {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, volumeBeforeDuck, 0);
-                volumeBeforeDuck = -1;
-            }
-            if (resumeOnFocusGain) {
-                resumeOnFocusGain = false;
-                player.start();
-                postProgress();
-            }
-            updatePlayButton();
+        adapter.notifyDataSetChanged();
+        if (playing) {
+            postProgress();
+        } else {
+            stopProgress();
         }
     }
 
@@ -381,8 +260,8 @@ public class MusicPlayerActivity extends ListActivity
 
     public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
         if (fromUser) {
-            timeText.setText(formatTime(progress) + " / "
-                    + formatTime(player != null && prepared ? player.getDuration() : 0));
+            int duration = player != null ? player.getDuration() : 0;
+            timeText.setText(formatTime(progress) + " / " + formatTime(duration));
         }
     }
 
@@ -392,7 +271,7 @@ public class MusicPlayerActivity extends ListActivity
 
     public void onStopTrackingTouch(SeekBar bar) {
         userSeeking = false;
-        if (player != null && prepared) {
+        if (player != null) {
             player.seekTo(bar.getProgress());
         }
     }
@@ -411,21 +290,12 @@ public class MusicPlayerActivity extends ListActivity
         progressPosted = false;
     }
 
-    private void resetProgressUi() {
-        stopProgress();
-        seekBar.setProgress(0);
-        seekBar.setMax(0);
-        timeText.setText(R.string.time_zero);
-    }
-
     private static String formatTime(int millis) {
         if (millis < 0) {
             millis = 0;
         }
         int totalSeconds = millis / 1000;
-        int minutes = totalSeconds / 60;
-        int seconds = totalSeconds % 60;
-        return pad(minutes) + ":" + pad(seconds);
+        return pad(totalSeconds / 60) + ":" + pad(totalSeconds % 60);
     }
 
     private static String pad(int value) {
@@ -514,9 +384,12 @@ public class MusicPlayerActivity extends ListActivity
         tracks.clear();
         tracks.addAll(found);
         adapter.notifyDataSetChanged();
-        currentIndex = -1;
-        resetProgressUi();
-        releasePlayer();
+
+        // Hand the new queue to the service. A rescan while playing therefore
+        // stops playback, which is the predictable behaviour.
+        if (player != null) {
+            player.setQueue(tracks);
+        }
 
         if (tracks.isEmpty()) {
             nowText.setText(R.string.no_song);
@@ -587,7 +460,7 @@ public class MusicPlayerActivity extends ListActivity
             }
 
             // Highlight the track that is currently loaded.
-            boolean active = position == currentIndex;
+            boolean active = player != null && position == player.getIndex();
             title.setTextColor(active ? 0xFF3DA9FC : 0xFFF2F5F8);
             return view;
         }

@@ -1,5 +1,8 @@
 package com.example.musicplayer;
 
+import android.os.Parcel;
+import android.os.Parcelable;
+
 /**
  * One playable audio entry.
  *
@@ -8,10 +11,14 @@ package com.example.musicplayer;
  * knows the file name). Both are represented here, so playback must accept
  * either a file path or a URI.
  *
+ * Parcelable so the queue can be handed to the playback service across the
+ * binder, and Serializable so a single track survives a process restart via the
+ * service's START_REDELIVER_INTENT retry.
+ *
  * Fallback labels are passed in by the caller rather than taken from resources,
  * so this class stays dependency-free and compiles against API level 8.
  */
-public class Track {
+public class Track implements Parcelable {
 
     public final String title;
     public final String artist;
@@ -32,6 +39,15 @@ public class Track {
         this.path = path;
         this.uri = uri;
         this.duration = duration;
+    }
+
+    private Track(Parcel in) {
+        title = in.readString();
+        artist = in.readString();
+        album = in.readString();
+        path = in.readString();
+        uri = in.readString();
+        duration = in.readLong();
     }
 
     /** Folder scan: only the file name is known. */
@@ -69,4 +85,30 @@ public class Track {
     public String displayName() {
         return title + " - " + artist;
     }
+
+    // -------------------------------------------------------------- Parcelable
+
+    public int describeContents() {
+        return 0;
+    }
+
+    public void writeToParcel(Parcel dest, int flags) {
+        dest.writeString(title);
+        dest.writeString(artist);
+        dest.writeString(album);
+        dest.writeString(path);
+        dest.writeString(uri);
+        dest.writeLong(duration);
+    }
+
+    public static final Parcelable.Creator<Track> CREATOR =
+            new Parcelable.Creator<Track>() {
+                public Track createFromParcel(Parcel in) {
+                    return new Track(in);
+                }
+
+                public Track[] newArray(int size) {
+                    return new Track[size];
+                }
+            };
 }

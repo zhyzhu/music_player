@@ -29,5 +29,10 @@
             </intent-filter>
         </activity>
 
+        <!-- Playback lives here so audio survives the activity going away. -->
+        <service
+            android:name=".TrackPlayer"
+            android:exported="false" />
+
     </application>
 </manifest>
